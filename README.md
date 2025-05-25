@@ -1,163 +1,172 @@
-# Wayback Machine Downloader
+# Wayback Machine Downloader - Web Archive Extractor
 
-A PHP script that downloads archived versions of websites from the Wayback Machine for a specific date and domain.
+A powerful PHP script for downloading and archiving complete website snapshots from the Internet Archive's Wayback Machine. This tool helps developers, researchers, and digital archivists preserve web content by downloading historical versions of websites with all their resources.
 
-## Features
+## Key Features
 
-- Downloads complete website snapshots from the Wayback Machine
-- Handles both HTML pages and their resources (images, CSS, JavaScript)
-- Supports multiple date formats and fallback to nearest available snapshots
-- Intelligent URL normalization and path handling
-- Automatic creation of directory structure
-- Generates sitemap of downloaded pages
-- Tracks external links and failed downloads
-- Emulates random browser fingerprints for each request
-- Comprehensive error logging and debugging options
-- Support for skipping existing files
-- Configurable maximum URL limit
-- Archive.org reference detection and filtering
+- **Complete Website Archiving**: Download full website snapshots with HTML, CSS, JavaScript, and media files
+- **Smart Resource Handling**: Automatic processing of all website assets and dependencies
+- **Intelligent URL Management**: Advanced URL normalization and deduplication
+- **Browser Emulation**: Random browser fingerprinting to avoid detection
+- **Flexible Configuration**: Customizable download limits and existing file handling
+- **Comprehensive Logging**: Detailed error tracking and download statistics
+- **Archive.org Integration**: Direct integration with Wayback Machine's APIs
+- **Resource Preservation**: Maintains original website structure and file organization
 
-## Requirements
+## Use Cases
 
-- PHP 7.4 or higher
-- cURL extension
-- DOM extension
-- JSON extension
-- Write permissions in the output directory
+This tool is perfect for:
 
-## Installation
+- **Wayback Machine Archiving & Downloading**: Download complete snapshots from the Internet Archive's Wayback Machine, perfect for web archive extraction and preservation
+- **Internet Archive Content Extraction**: Extract and preserve historical web content from web archives, including all resources and dependencies
+- **Website Backup & Recovery**: Create local backups of historical website versions for disaster recovery and content preservation
+- **Digital Preservation**: Archive important web content before it disappears, maintaining a complete web archive of your digital assets
+- **Content Migration**: Download old website versions for content transfer to new platforms, preserving the original structure
+- **Historical Research**: Access and analyze past versions of websites for research purposes, with full web archive support
+- **SEO Analysis**: Study historical changes in website structure and content through wayback machine snapshots
+- **Legal Compliance**: Maintain archives of web content for legal or regulatory requirements, with complete web archive extraction
+- **Website Development**: Compare different versions of a website during development using wayback machine downloads
+- **Content Auditing**: Review historical content changes and updates through internet archive snapshots
+- **Brand Monitoring**: Track changes in brand presence and messaging over time with web archive tools
+- **Competitive Analysis**: Archive competitor websites for historical comparison using wayback machine extractors
 
-1. Clone this repository or download the script
-2. Ensure PHP and required extensions are installed
-3. Make the script executable (optional):
+## Technical Requirements
+
+- PHP 7.4+ with modern extensions
+- cURL for HTTP requests
+- DOM for HTML parsing
+- JSON for API communication
+- Write permissions for file operations
+
+## Quick Start
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/wayback-machine-downloader.git
+   ```
+
+2. Make the script executable:
    ```bash
    chmod +x run.php
    ```
 
-## Usage
+3. Run the downloader:
+   ```bash
+   php run.php example.com 20240321
+   ```
+
+## Advanced Usage
+
+The script supports various parameters for fine-tuning the download process:
 
 ```bash
 php run.php <domain> <date YYYYMMDD> [debug_level] [skip_existing] [max_urls]
 ```
 
-### Parameters
+### Parameter Details
 
-- `domain`: The domain to download (e.g., example.com)
-- `date`: The date to download in YYYYMMDD format (e.g., 20240321)
-- `debug_level`: (Optional) Show only errors ('error') or all info ('info', default)
-- `skip_existing`: (Optional) Skip URLs that already have files (1) or download all (0, default)
-- `max_urls`: (Optional) Maximum number of URLs to process (default: 50)
+- `domain`: Target website domain (e.g., example.com)
+- `date`: Archive date in YYYYMMDD format
+- `debug_level`: 'error' for minimal output, 'info' for detailed logging
+- `skip_existing`: 1 to skip downloaded files, 0 to download all
+- `max_urls`: Maximum number of pages to process
 
-### Examples
+### Usage Examples
 
-Basic usage:
+Basic website archiving:
 ```bash
 php run.php example.com 20240321
 ```
 
-With debug level set to error only:
+Archiving with error-only logging:
 ```bash
 php run.php example.com 20240321 error
 ```
 
-Skip existing files:
+Incremental archiving (skip existing):
 ```bash
 php run.php example.com 20240321 info 1
 ```
 
-Limit to 100 URLs:
+Large site archiving (100 pages):
 ```bash
 php run.php example.com 20240321 info 0 100
 ```
 
-## Output Structure
+## Output Organization
 
-The script creates the following structure in the `output` directory:
+The script creates a structured archive in the `output` directory:
 
 ```
 output/
 └── example.com/
-    ├── index.html
-    ├── sitemap.txt
-    ├── missing.log
-    └── [other downloaded files and directories]
+    ├── index.html          # Homepage
+    ├── sitemap.txt         # Page index
+    ├── missing.log         # Error tracking
+    └── [resources]/        # Website assets
 ```
 
-- `index.html`: The homepage of the website
-- `sitemap.txt`: List of all downloaded pages
-- `missing.log`: Log of URLs that failed to download or contained archive.org references
-- Other files and directories mirror the original website structure
+## Advanced Features
 
-## Features in Detail
+### Smart Browser Emulation
+- Dynamic user agent rotation
+- Realistic browser fingerprints
+- Platform-specific headers
+- Security policy emulation
 
-### Browser Fingerprinting
-- Random user agent strings for each request
-- Varying browser versions and platforms
-- Realistic security headers and preferences
-- Different OS versions and configurations
-
-### Error Handling
-- Detailed error logging in missing.log
-- HTTP status code tracking
-- cURL error reporting
+### Intelligent Error Handling
+- Detailed error logging
+- HTTP status tracking
 - Archive.org reference detection
-- Empty response detection
+- Empty response handling
+- Automatic retry mechanism
 
 ### URL Processing
-- Automatic URL normalization
-- Fragment identifier removal
-- Trailing slash handling
-- Query parameter preservation
-- Protocol-relative URL resolution
+- Fragment removal
+- Path normalization
+- Query preservation
+- Protocol handling
+- Relative URL resolution
 
 ### Resource Management
-- Automatic directory creation
-- File existence checking
-- Skip existing files option
-- Resource type detection
-- MIME type handling
+- Directory structure preservation
+- File existence verification
+- MIME type detection
+- Resource deduplication
+- External link tracking
 
-### Debugging
-- Verbose logging options
-- cURL verbose output
-- HTTP header inspection
-- Response body preview
-- Redirect tracking
+## Development and Debugging
 
-## Logging
-
-### missing.log Format
+### Logging System
 ```
 === Missing URLs for example.com (20240321) ===
 Format: URL | Error | Timestamp
 ----------------------------------------
-https://example.com/page.html | cURL error (28): Connection timed out | 2024-03-21 15:30:45
-https://example.com/other.html | Contains archive.org references | 2024-03-21 15:31:12
+https://example.com/page.html | Connection timeout | 2024-03-21 15:30:45
 ```
 
-### Console Output
-The script provides real-time feedback with color-coded messages:
-- [...] Progress messages
-- [✓] Success messages
-- [×] Warning/Error messages
+### Console Feedback
+- [...] Progress updates
+- [✓] Success confirmations
+- [×] Error notifications
 - [↗] Information messages
 
-## Notes
+## Best Practices
 
-- The script respects Wayback Machine's rate limits
-- Failed downloads are logged for later retry
-- External links are tracked but not downloaded
-- Archive.org references are detected and filtered
-- Each request uses a unique browser fingerprint
+- Respect Wayback Machine's rate limits
+- Monitor missing.log for failed downloads
+- Use appropriate max_urls for large sites
+- Enable skip_existing for incremental updates
+- Check error logs for optimization opportunities
 
-## Troubleshooting
+## Troubleshooting Guide
 
-If you encounter issues:
-1. Check the missing.log file for detailed error information
-2. Verify your PHP version and extensions
-3. Ensure you have write permissions in the output directory
-4. Check your internet connection
-5. Try increasing the retry count or sleep times in the script
+Common issues and solutions:
+1. Check missing.log for detailed error information
+2. Verify PHP version and extension availability
+3. Confirm directory permissions
+4. Test internet connectivity
+5. Adjust retry parameters if needed
 
 ## License
 
@@ -165,15 +174,14 @@ This project is open source and available under the MIT License.
 
 ---
 
-## Professional Web Scraping Services
+## Professional Web Development Services
 
-Need help with large-scale web scraping projects? Check out our professional web scraping services at [SapientPro](https://sapient.pro/big-data-and-scraping-services).
+Need help with web archiving, data extraction, or custom software development? Our team at SapientPro specializes in:
 
-Our team of experts can help you with:
 - Custom web scraping solutions
 - Data extraction and processing
 - Large-scale data collection
 - API development and integration
 - Data analysis and visualization
 
-Visit out website for [Custom Software Development](https://sapient.pro/custom-software-development) Services. 
+Visit our website for [Custom Software Development](https://sapient.pro/custom-software-development) Services. 
