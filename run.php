@@ -34,7 +34,8 @@ $stats = [
     'externalLinks' => [],
     'sitemap' => [],
     'visitedPages' => [],
-    'skippedExisting' => 0
+    'skippedExisting' => 0,
+    'totalUrlsFound' => 0  // New counter for all URLs found
 ];
 
 // Create output directory if it doesn't exist
@@ -109,9 +110,33 @@ function normalizeUrl(string $url): string {
     return $normalized;
 }
 
+/**
+ * Normalize file path by resolving relative paths
+ */
+function normalizePath(string $path): string {
+    // Remove any leading slashes
+    $path = ltrim($path, '/');
+    
+    // Split path into segments
+    $segments = explode('/', $path);
+    $result = [];
+    
+    foreach ($segments as $segment) {
+        if ($segment === '..') {
+            // Remove the last segment if we're going up
+            array_pop($result);
+        } elseif ($segment !== '.' && $segment !== '') {
+            // Add the segment if it's not current directory
+            $result[] = $segment;
+        }
+    }
+    
+    return implode('/', $result);
+}
+
 // Fetch initial page list via CDX API
 progress("Fetching page list via CDX API...");
-$api = "http://web.archive.org/cdx/search/cdx?url={$domain}/*&matchType=prefix&from={$date}&to={$date}&output=json&fl=original&filter=statuscode:200&collapse=urlkey";
+$api = "https://web.archive.org/cdx/search/cdx?url={$domain}/*&matchType=prefix&from={$date}&to={$date}&output=json&fl=original&filter=statuscode:200&collapse=urlkey";
 $json = @file_get_contents($api);
 $entries = json_decode($json, true);
 
@@ -131,7 +156,7 @@ if (!$entries || count($entries) < 2) {
     $html = false;
     foreach ($homepageUrls as $mainUrl) {
         echo "   [i] Trying homepage URL: $mainUrl\n";
-        $snapshotUrl = "http://web.archive.org/web/{$date}id_/{$mainUrl}";
+        $snapshotUrl = "https://web.archive.org/web/{$date}id_/{$mainUrl}";
         $html = @file_get_contents($snapshotUrl);
         
         if ($html !== false && !str_contains($html, "Wayback Machine doesn't have that page archived")) {
@@ -176,18 +201,21 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
     $parsedUrl = parse_url($normalizedUrl);
     $path = $parsedUrl['path'] ?? '/';
     if (substr($path, -1) === '/') $path .= 'index.html';
-    $savePath = $outputDir . $path;
+    $normalizedPath = normalizePath($path);
+    $savePath = $outputDir . '/' . $normalizedPath;
     
     if ($skipExisting && file_exists($savePath) && filesize($savePath) > 0) {
-        info("Skipping existing file: $path", 'info');
+        info("Skipping existing file: $normalizedPath", 'info');
         $stats['skippedExisting']++;
         $stats['visitedPages'][$normalizedUrl] = true;
-        $stats['totalPages']++;
+        $currentUrlId = $stats['totalPages'] + $stats['skippedExisting'];
+        $totalUrls = max($stats['totalUrlsFound'], count($pendingPages) + $stats['totalPages'] + $stats['skippedExisting']);
+        echo "\n==> [{$currentUrlId} / {$totalUrls}] Skipping existing: $normalizedUrl\n";
         
         // Parse the existing file to find new links
         $html = file_get_contents($savePath);
         if ($html !== false) {
-            info("Parsing existing file for links: $path", 'info');
+            info("Parsing existing file for links: $normalizedPath", 'info');
             $dom = new DOMDocument();
             @$dom->loadHTML($html);
             $xpath = new DOMXPath($dom);
@@ -232,6 +260,7 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
 
                 if (!isset($stats['visitedPages'][$normalizedResolved]) && !in_array($normalizedResolved, $pendingPages)) {
                     $pendingPages[] = $normalizedResolved;
+                    $stats['totalUrlsFound']++;
                     success("Found new link: $normalizedResolved", 'info');
                 }
             }
@@ -241,10 +270,12 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
 
     $stats['visitedPages'][$normalizedUrl] = true;
     $stats['totalPages']++;
-    echo "\n==> [{$stats['totalPages']}] $normalizedUrl\n";
+    $currentUrlId = $stats['totalPages'] + $stats['skippedExisting'];
+    $totalUrls = max($stats['totalUrlsFound'], count($pendingPages) + $stats['totalPages'] + $stats['skippedExisting']);
+    echo "\n==> [{$currentUrlId} / {$totalUrls}] $normalizedUrl\n";
 
     // Try direct Wayback Machine URL first
-    $snapshotUrl = "http://web.archive.org/web/{$date}id_/{$normalizedUrl}";
+    $snapshotUrl = "https://web.archive.org/web/{$date}id_/{$normalizedUrl}";
     echo "   [↻] Trying direct snapshot: $snapshotUrl\n";
     
     // Use cURL to handle redirects properly
@@ -368,8 +399,8 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
     $parsedUrl = parse_url($normalizedUrl);
     $path = $parsedUrl['path'] ?? '/';
     if (substr($path, -1) === '/') $path .= 'index.html';
-
-    $savePath = $outputDir . $path;
+    $normalizedPath = normalizePath($path);
+    $savePath = $outputDir . '/' . $normalizedPath;
     $saveDir = dirname($savePath);
     if (!is_dir($saveDir)) mkdir($saveDir, 0777, true);
 
@@ -389,21 +420,13 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
     }
 
     file_put_contents($savePath, $html);
-    success("Saved: $path");
+    success("Saved: $normalizedPath");
 }
 
 // Save sitemap
 file_put_contents("$outputDir/sitemap.txt", implode("\n", $stats['sitemap']));
 
-// Print summary
-echo "\n=== SUMMARY ===\n";
-echo "• Total pages processed:        {$stats['totalPages']}\n";
-echo "• Total resources downloaded:   {$stats['totalResources']}\n";
-echo "• Found via fallback:          {$stats['foundViaFallback']}\n";
-echo "• Failed to download:          {$stats['notFound']}\n";
-if ($skipExisting) {
-    echo "• Skipped existing files:      {$stats['skippedExisting']}\n";
-}
+
 echo "\n[ℹ] Failed URLs have been logged to: $missingLogFile\n";
 
 if (!empty($stats['failedUrls'])) {
@@ -418,6 +441,16 @@ if (!empty($stats['externalLinks'])) {
     foreach ($stats['externalLinks'] as $ext) {
         echo " - $ext\n";
     }
+}
+
+// Print summary
+echo "\n=== SUMMARY ===\n";
+echo "• Total pages processed:        {$stats['totalPages']}\n";
+echo "• Total resources downloaded:   {$stats['totalResources']}\n";
+echo "• Found via fallback:          {$stats['foundViaFallback']}\n";
+echo "• Failed to download:          {$stats['notFound']}\n";
+if ($skipExisting) {
+    echo "• Skipped existing files:      {$stats['skippedExisting']}\n";
 }
 
 /**
@@ -489,7 +522,8 @@ function processHtml(string $html, string $baseUrl, string $date, string $output
             }
 
             if (substr($path, -1) === '/') $path .= 'index.html';
-            $localPath = $outputDir . $path;
+            $normalizedPath = normalizePath($path);
+            $localPath = $outputDir . '/' . $normalizedPath;
             $localRel = $path;
             $localDir = dirname($localPath);
             if (!is_dir($localDir)) mkdir($localDir, 0777, true);
@@ -501,7 +535,7 @@ function processHtml(string $html, string $baseUrl, string $date, string $output
                 if ($data !== false) {
                     file_put_contents($localPath, $data);
                     success("Resource saved: $path");
-                    $stats['totalResources']++;
+                    $GLOBALS['stats']['totalResources']++;
                     if ($usedDate !== $date) $stats['foundViaFallback']++;
                 } else {
                     warning("Resource failed: $path", 'error');
@@ -633,7 +667,7 @@ function fetchResource(string $url, string &$mimeType = ''): string|false {
  */
 function fetchResourceWithFallback(string $url, string $date, string $mainDomain, ?string &$usedDate = null): string|false {
     $mime = '';
-    $snapshotUrl = "http://web.archive.org/web/{$date}id_/{$url}";
+    $snapshotUrl = "https://web.archive.org/web/{$date}id_/{$url}";
     echo "   [i] Trying snapshot: $snapshotUrl\n";
     $data = fetchResource($snapshotUrl, $mime);
     if ($data !== false) {
@@ -642,7 +676,7 @@ function fetchResourceWithFallback(string $url, string $date, string $mainDomain
     }
 
     $encoded = urlencode($url);
-    $api = "http://web.archive.org/cdx/search/cdx?url={$encoded}&output=json&fl=timestamp&filter=statuscode:200&collapse=digest&to={$date}&limit=10&sort=reverse";
+    $api = "https://web.archive.org/cdx/search/cdx?url={$encoded}&output=json&fl=timestamp&filter=statuscode:200&collapse=digest&to={$date}&limit=10&sort=reverse";
     $json = @file_get_contents($api);
     $entries = json_decode($json, true);
     if (!$entries || count($entries) < 2) {
@@ -653,7 +687,7 @@ function fetchResourceWithFallback(string $url, string $date, string $mainDomain
     array_shift($entries);
     foreach ($entries as $entry) {
         $prevDate = $entry[0];
-        $prevUrl = "http://web.archive.org/web/{$prevDate}id_/{$url}";
+        $prevUrl = "https://web.archive.org/web/{$prevDate}id_/{$url}";
         echo "   [i] Trying fallback snapshot: $prevUrl\n";
         $mime = '';
         $data = fetchResource($prevUrl, $mime);
