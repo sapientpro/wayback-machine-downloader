@@ -847,8 +847,9 @@ function fetchResource(string $url, string &$mimeType = ''): string|false {
         CURLOPT_USERAGENT => $userAgent,
         CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_ENCODING => '', // Accept all encodings
         CURLOPT_HTTPHEADER => [
-            "Accept: {$fingerprint['accept']}",
+            "Accept: */*", // Accept all content types
             "Accept-Language: {$fingerprint['accept_language']}",
             "Accept-Encoding: {$fingerprint['accept_encoding']}",
             "Sec-Ch-Ua: {$fingerprint['sec_ch_ua']}",
@@ -964,10 +965,8 @@ function fetchResource(string $url, string &$mimeType = ''): string|false {
         }
     }
 
-    if (!str_starts_with($mimeType, 'text/html')) {
-        return $body;
-    }
-    return false;
+    // Return the body for all content types
+    return $body;
 }
 
 /**
