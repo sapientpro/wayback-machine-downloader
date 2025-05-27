@@ -38,9 +38,12 @@ $stats = [
     'totalUrlsFound' => 0  // New counter for all URLs found
 ];
 
+// Add this after the stats initialization
+$failedUrlsCache = [];
+
 // Create output directory if it doesn't exist
 if (!is_dir($outputDir)) {
-    mkdir($outputDir, 0777, true);
+    ensureDirectoryExists($outputDir);
 }
 
 // Initialize missing.log with header
@@ -80,7 +83,7 @@ function info(string $msg, string $level = 'info'): void {
 }
 
 /**
- * Normalize URL by removing fragments and trailing slashes
+ * Normalize URL by removing fragments and handling trailing slashes
  */
 function normalizeUrl(string $url): string {
     // Remove fragment identifier
@@ -97,10 +100,17 @@ function normalizeUrl(string $url): string {
     $path = $parsed['path'] ?? '';
     $query = isset($parsed['query']) ? '?' . $parsed['query'] : '';
     
-    // Remove trailing slash if it's not the root URL
-    if ($path === '/' || $path === '') {
-        $path = '/';
-    } else {
+    // Encode only specific characters in the path
+    $path = preg_replace_callback('/[^A-Za-z0-9\-._~:\/\?#\[\]@!$&\'()*+,;=]/', function($matches) {
+        return rawurlencode($matches[0]);
+    }, $path);
+    
+    // Remove trailing slash from root path
+    if ($path === '/') {
+        $path = '';
+    }
+    // Remove trailing slash from other paths
+    else if (substr($path, -1) === '/') {
         $path = rtrim($path, '/');
     }
     
@@ -132,6 +142,71 @@ function normalizePath(string $path): string {
     }
     
     return implode('/', $result);
+}
+
+/**
+ * Transform URL to static HTML path
+ */
+function transformUrlToStaticPath(string $url): string {
+    $parsed = parse_url($url);
+    if ($parsed === false) {
+        return $url;
+    }
+
+    $path = $parsed['path'] ?? '/';
+    $query = isset($parsed['query']) ? $parsed['query'] : '';
+    $fragment = isset($parsed['fragment']) ? $parsed['fragment'] : '';
+    
+    // Handle query parameters
+    if (!empty($query)) {
+        parse_str($query, $params);
+        $paramPath = [];
+        foreach ($params as $key => $value) {
+            // Skip empty values
+            if ($value === '' || $value === null) continue;
+            // Clean parameter values to be filesystem-safe
+            $cleanValue = preg_replace('/[^a-zA-Z0-9-]/', '_', $value);
+            $paramPath[] = $key . '_' . $cleanValue;
+        }
+        if (!empty($paramPath)) {
+            // Remove trailing slash if exists
+            $path = rtrim($path, '/');
+            // Add parameters as directory
+            $path .= '/' . implode('_', $paramPath);
+        }
+    }
+    
+    // Remove trailing slash if exists
+    $path = rtrim($path, '/');
+    
+    // Handle root path
+    if ($path === '' || $path === '/') {
+        $path = 'index.html';
+    }
+    // Handle .php files
+    else if (preg_match('/\.php$/', $path)) {
+        $path = preg_replace('/\.php$/', '/index.html', $path);
+    }
+    // Handle paths that don't have an extension
+    else if (!preg_match('/\.[a-zA-Z0-9]+$/', $path)) {
+        $path .= '/index.html';
+    }
+    // Handle paths with extensions
+    else {
+        // Get the directory and filename without extension
+        $dir = dirname($path);
+        $filename = pathinfo($path, PATHINFO_FILENAME);
+        // Create directory structure with index.html
+        $path = $dir . '/' . $filename . '/index.html';
+    }
+    
+    // For absolute URLs, reconstruct with scheme and host
+    if (isset($parsed['scheme']) && isset($parsed['host'])) {
+        return $parsed['scheme'] . '://' . $parsed['host'] . $path;
+    }
+    
+    // For relative URLs, just return the path
+    return $path;
 }
 
 // Fetch initial page list via CDX API
@@ -197,12 +272,19 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
         break;
     }
 
-    // Check if file already exists and skip if requested
-    $parsedUrl = parse_url($normalizedUrl);
+    // Get the static path for checking existence and saving
+    $staticPath = transformUrlToStaticPath($normalizedUrl);
+    $parsedUrl = parse_url($staticPath);
     $path = $parsedUrl['path'] ?? '/';
-    if (substr($path, -1) === '/') $path .= 'index.html';
     $normalizedPath = normalizePath($path);
+    
+    // For root path, use index.html
+    if ($normalizedPath === '') {
+        $normalizedPath = 'index.html';
+    }
+    
     $savePath = $outputDir . '/' . $normalizedPath;
+    $storedHtml = false;
     
     if ($skipExisting && file_exists($savePath) && filesize($savePath) > 0) {
         info("Skipping existing file: $normalizedPath", 'info');
@@ -213,57 +295,13 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
         echo "\n==> [{$currentUrlId} / {$totalUrls}] Skipping existing: $normalizedUrl\n";
         
         // Parse the existing file to find new links
-        $html = file_get_contents($savePath);
-        if ($html !== false) {
+        $storedHtml = file_get_contents($savePath);
+        if ($storedHtml !== false) {
             info("Parsing existing file for links: $normalizedPath", 'info');
-            $dom = new DOMDocument();
-            @$dom->loadHTML($html);
-            $xpath = new DOMXPath($dom);
-            
-            // Find all links in the existing file
-            $nodes = $xpath->query("//a[@href]");
-            foreach ($nodes as $node) {
-                $rawAttr = $node->getAttribute('href');
-                if (!$rawAttr) continue;
-
-                // Handle protocol-relative URLs
-                if (strpos($rawAttr, '//') === 0) {
-                    $rawAttr = 'https:' . $rawAttr;
-                }
-
-                // Extract original URL from Wayback Machine URL
-                if (preg_match('#/web/\d+[a-z_]{0,3}/(https?://[^"\'>]+)#', $rawAttr, $m)) {
-                    $rawAttr = $m[1];
-                }
-
-                if (str_contains($rawAttr, '<') || str_contains($rawAttr, '</')) {
-                    warning("Skipped (HTML in URL): $rawAttr", 'info');
-                    continue;
-                }
-
-                $resolved = resolveUrl($normalizedUrl, $rawAttr);
-                $normalizedResolved = normalizeUrl($resolved);
-                
-                // Skip empty or invalid URLs
-                if (empty($normalizedResolved) || !filter_var($normalizedResolved, FILTER_VALIDATE_URL)) {
-                    continue;
-                }
-
-                $parsed = parse_url($normalizedResolved);
-                $host = $parsed['host'] ?? '';
-                
-                if ($host && $host !== $domain) {
-                    info("External link: $normalizedResolved", 'info');
-                    $stats['externalLinks'][] = $normalizedResolved;
-                    continue;
-                }
-
-                if (!isset($stats['visitedPages'][$normalizedResolved]) && !in_array($normalizedResolved, $pendingPages)) {
-                    $pendingPages[] = $normalizedResolved;
-                    $stats['totalUrlsFound']++;
-                    success("Found new link: $normalizedResolved", 'info');
-                }
-            }
+            $processedHtml = processHtml($storedHtml, $normalizedUrl, $date, $outputDir, $domain, $stats);
+            // No need to resave the processed HTML if it came from a file
+        } else {
+            echo "\n can't load file: $savePath";
         }
         continue;
     }
@@ -294,19 +332,13 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
         $userAgent = getRandomUserAgent();
         $fingerprint = getRandomFingerprint();
         
-        curl_setopt_array($ch, [
+        $curlOptions = [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_MAXREDIRS => 5,
             CURLOPT_HEADER => true,
             CURLOPT_TIMEOUT => 30,
             CURLOPT_USERAGENT => $userAgent,
-            CURLOPT_VERBOSE => true,
-            CURLOPT_STDERR => $verbose = fopen('php://temp', 'w+'),
-            CURLOPT_HEADERFUNCTION => function($curl, $header) use (&$headers) {
-                $headers .= $header;
-                return strlen($header);
-            },
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => false,
             CURLOPT_AUTOREFERER => true,
@@ -326,7 +358,13 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
                 "Upgrade-Insecure-Requests: {$fingerprint['upgrade_insecure_requests']}",
                 "DNT: {$fingerprint['dnt']}"
             ]
-        ]);
+        ];
+        $verbose = null;
+        if ($debugLevel === 'info') {
+            $curlOptions[CURLOPT_VERBOSE] = true;
+            $curlOptions[CURLOPT_STDERR] = $verbose = fopen('php://temp', 'w+');
+        }
+        curl_setopt_array($ch, $curlOptions);
         
         $response = curl_exec($ch);
         $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
@@ -336,9 +374,11 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
         $error = curl_error($ch);
         $errno = curl_errno($ch);
         
-        // Get verbose debug information
-        rewind($verbose);
-        $verboseLog = stream_get_contents($verbose);
+        // Get verbose debug information only if debug level is 'info'
+        if ($debugLevel === 'info') {
+            rewind($verbose);
+            $verboseLog = stream_get_contents($verbose);
+        }
         
         $html = substr($response, $headerSize);
         
@@ -346,10 +386,12 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
 
         if ($error) {
             warning("cURL error ($errno): $error", 'error');
-            echo "   [i] Verbose log:\n";
-            foreach (explode("\n", $verboseLog) as $line) {
-                if (trim($line)) {
-                    echo "      " . trim($line) . "\n";
+            if ($debugLevel === 'info') {
+                echo "   [i] Verbose log:\n";
+                foreach (explode("\n", $verboseLog) as $line) {
+                    if (trim($line)) {
+                        echo "      " . trim($line) . "\n";
+                    }
                 }
             }
             
@@ -369,7 +411,7 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
         warning("Failed after {$maxRetries} retry attempts", 'error');
     }
 
-    if ($redirectCount > 0) {
+    if ($redirectCount > 0 && $debugLevel === 'info') {
         echo "   [i] Followed {$redirectCount} redirect(s)\n";
         echo "   [i] Final URL: $effectiveUrl\n";
         if ($status === 302) {
@@ -390,33 +432,59 @@ while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
             $error,
             date('Y-m-d H:i:s')
         );
-        file_put_contents($missingLogFile, $logEntry, FILE_APPEND);
+        file_put_contents($missingLogFile, $logEntry);
         
         continue;
     }
 
-    // Save the page
-    $parsedUrl = parse_url($normalizedUrl);
-    $path = $parsedUrl['path'] ?? '/';
-    if (substr($path, -1) === '/') $path .= 'index.html';
-    $normalizedPath = normalizePath($path);
-    $savePath = $outputDir . '/' . $normalizedPath;
+    // Save the page using the static path
     $saveDir = dirname($savePath);
-    if (!is_dir($saveDir)) mkdir($saveDir, 0777, true);
+    ensureDirectoryExists($saveDir);
 
     $html = processHtml($html, $normalizedUrl, $date, $outputDir, $domain, $stats);
     
     // Check for archive.org references before saving
     if (containsArchiveReferences($html)) {
         warning("Archive.org references found in content: $normalizedUrl", 'error');
-        $logEntry = sprintf("%s | Contains archive.org references | %s\n", 
-            $normalizedUrl,
-            date('Y-m-d H:i:s')
-        );
-        file_put_contents($missingLogFile, $logEntry, FILE_APPEND);
-        $stats['notFound']++;
-        $stats['failedUrls'][] = $normalizedUrl;
-        continue;
+        
+        // Try to find a snapshot using the available API
+        $usedDate = null;
+        $data = tryAvailableApiSnapshot($normalizedUrl, $usedDate);
+        if ($data !== false) {
+            $html = $data;
+            success("Found snapshot via available API: $normalizedUrl");
+            
+            // Get the static path for saving
+            $staticPath = transformUrlToStaticPath($normalizedUrl);
+            $parsedUrl = parse_url($staticPath);
+            $path = $parsedUrl['path'] ?? '/';
+            $normalizedPath = normalizePath($path);
+            
+            // For root path, use index.html
+            if ($normalizedPath === '') {
+                $normalizedPath = 'index.html';
+            }
+            
+            $savePath = $outputDir . '/' . $normalizedPath;
+            $saveDir = dirname($savePath);
+            ensureDirectoryExists($saveDir);
+            
+            // Process the HTML before saving
+            $html = processHtml($html, $normalizedUrl, $date, $outputDir, $domain, $stats);
+            
+            // Save the processed HTML
+            file_put_contents($savePath, $html);
+            success("Saved: $normalizedPath");
+        } else {
+            $logEntry = sprintf("%s | Contains archive.org references | %s\n", 
+                $normalizedUrl,
+                date('Y-m-d H:i:s')
+            );
+            file_put_contents($missingLogFile, $logEntry, FILE_APPEND);
+            $stats['notFound']++;
+            $stats['failedUrls'][] = $normalizedUrl;
+            continue;
+        }
     }
 
     file_put_contents($savePath, $html);
@@ -462,6 +530,120 @@ function processHtml(string $html, string $baseUrl, string $date, string $output
     $xpath = new DOMXPath($dom);
     $stats['sitemap'][] = normalizeUrl($baseUrl);
 
+    // Process video elements and their resources
+    $videos = $xpath->query("//video");
+    foreach ($videos as $video) {
+        // Process video source elements
+        $sources = $xpath->query(".//source", $video);
+        foreach ($sources as $source) {
+            $src = $source->getAttribute('src');
+            if (empty($src)) continue;
+
+            // Handle protocol-relative URLs
+            if (strpos($src, '//') === 0) {
+                $src = 'https:' . $src;
+            }
+
+            $resolved = resolveUrl($baseUrl, $src);
+            $normalizedResolved = normalizeUrl($resolved);
+            
+            // Skip empty or invalid URLs
+            if (empty($normalizedResolved) || !filter_var($normalizedResolved, FILTER_VALIDATE_URL)) {
+                continue;
+            }
+
+            $parsed = parse_url($normalizedResolved);
+            $host = $parsed['host'] ?? '';
+
+            if ($host && $host !== $mainDomain) {
+                info("External video: $normalizedResolved", 'info');
+                $stats['externalLinks'][] = $normalizedResolved;
+                continue;
+            }
+
+            // Add to pending pages instead of downloading
+            if (!isset($stats['visitedPages'][$normalizedResolved]) && !in_array($normalizedResolved, $GLOBALS['pendingPages'])) {
+                $GLOBALS['pendingPages'][] = $normalizedResolved;
+            }
+        }
+
+        // Process track elements (subtitles)
+        $tracks = $xpath->query(".//track", $video);
+        foreach ($tracks as $track) {
+            $src = $track->getAttribute('src');
+            if (empty($src)) continue;
+
+            // Handle protocol-relative URLs
+            if (strpos($src, '//') === 0) {
+                $src = 'https:' . $src;
+            }
+
+            $resolved = resolveUrl($baseUrl, $src);
+            $normalizedResolved = normalizeUrl($resolved);
+            
+            // Skip empty or invalid URLs
+            if (empty($normalizedResolved) || !filter_var($normalizedResolved, FILTER_VALIDATE_URL)) {
+                continue;
+            }
+
+            $parsed = parse_url($normalizedResolved);
+            $host = $parsed['host'] ?? '';
+
+            if ($host && $host !== $mainDomain) {
+                info("External subtitle: $normalizedResolved", 'info');
+                $stats['externalLinks'][] = $normalizedResolved;
+                continue;
+            }
+
+            // Add to pending pages instead of downloading
+            if (!isset($stats['visitedPages'][$normalizedResolved]) && !in_array($normalizedResolved, $GLOBALS['pendingPages'])) {
+                $GLOBALS['pendingPages'][] = $normalizedResolved;
+            }
+        }
+    }
+
+    // Process CSS files first
+    $cssLinks = $xpath->query("//link[@rel='stylesheet' and @href]");
+    foreach ($cssLinks as $link) {
+        $href = $link->getAttribute('href');
+        if (empty($href)) continue;
+
+        // Handle protocol-relative URLs
+        if (strpos($href, '//') === 0) {
+            $href = 'https:' . $href;
+        }
+
+        $resolved = resolveUrl($baseUrl, $href);
+        $normalizedResolved = normalizeUrl($resolved);
+        
+        // Skip empty or invalid URLs
+        if (empty($normalizedResolved) || !filter_var($normalizedResolved, FILTER_VALIDATE_URL)) {
+            continue;
+        }
+
+        $parsed = parse_url($normalizedResolved);
+        $host = $parsed['host'] ?? '';
+
+        if ($host && $host !== $mainDomain) {
+            info("External CSS: $normalizedResolved", 'info');
+            $stats['externalLinks'][] = $normalizedResolved;
+            continue;
+        }
+
+        // Add to pending pages instead of downloading
+        if (!isset($stats['visitedPages'][$normalizedResolved]) && !in_array($normalizedResolved, $GLOBALS['pendingPages'])) {
+            $GLOBALS['pendingPages'][] = $normalizedResolved;
+        }
+    }
+
+    // Process inline styles (for resource extraction only)
+    $styleNodes = $xpath->query("//style");
+    foreach ($styleNodes as $style) {
+        $css = $style->textContent;
+        // Only extract resources, do not rewrite
+        processCss($css, $baseUrl, $date, $outputDir, $mainDomain, $stats);
+    }
+
     $tags = [
         ['tag' => 'link',   'attr' => 'href'],
         ['tag' => 'script', 'attr' => 'src'],
@@ -503,12 +685,10 @@ function processHtml(string $html, string $baseUrl, string $date, string $output
 
             $parsed = parse_url($normalizedResolved);
             $host = $parsed['host'] ?? '';
-            $path = $parsed['path'] ?? '/';
 
             if ($host && $host !== $mainDomain) {
                 info("External link: $normalizedResolved", 'info');
                 $stats['externalLinks'][] = $normalizedResolved;
-                $node->setAttribute($attr, $normalizedResolved);
                 continue;
             }
 
@@ -521,52 +701,150 @@ function processHtml(string $html, string $baseUrl, string $date, string $output
                 }
             }
 
-            if (substr($path, -1) === '/') $path .= 'index.html';
-            $normalizedPath = normalizePath($path);
-            $localPath = $outputDir . '/' . $normalizedPath;
-            $localRel = $path;
-            $localDir = dirname($localPath);
-            if (!is_dir($localDir)) mkdir($localDir, 0777, true);
-
-            if (!file_exists($localPath) && in_array($tagInfo['tag'], ['link', 'script', 'img'])) {
-                $usedDate = '';
-                progress("Downloading resource: $normalizedResolved");
-                $data = fetchResourceWithFallback($normalizedResolved, $date, $mainDomain, $usedDate);
-                if ($data !== false) {
-                    file_put_contents($localPath, $data);
-                    success("Resource saved: $path");
-                    $GLOBALS['stats']['totalResources']++;
-                    if ($usedDate !== $date) $stats['foundViaFallback']++;
-                } else {
-                    warning("Resource failed: $path", 'error');
-                    $stats['notFound']++;
-                    $stats['failedUrls'][] = $normalizedResolved;
+            // Add to pending pages instead of downloading
+            if (in_array($tagInfo['tag'], ['link', 'script', 'img'])) {
+                if (!isset($stats['visitedPages'][$normalizedResolved]) && !in_array($normalizedResolved, $GLOBALS['pendingPages'])) {
+                    $GLOBALS['pendingPages'][] = $normalizedResolved;
                 }
             }
-
-            $node->setAttribute($attr, $localRel);
         }
     }
 
-    return $dom->saveHTML();
+    // Return the HTML as-is (no rewriting)
+    return $html;
+}
+
+/**
+ * Process CSS content and extract resources
+ */
+function processCss(string $css, string $baseUrl, string $date, string $outputDir, string $mainDomain, array &$stats): string {
+    // Extract URLs from CSS
+    $patterns = [
+        // url() patterns
+        '/url\([\'"]?([^\'")\s]+)[\'"]?\)/i',
+        // @import patterns
+        '/@import\s+[\'"]?([^\'"\s;]+)[\'"]?/i',
+        // background-image patterns
+        '/background-image:\s*url\([\'"]?([^\'")\s]+)[\'"]?\)/i',
+        // src patterns in @font-face
+        '/@font-face\s*{[^}]*src:\s*url\([\'"]?([^\'")\s]+)[\'"]?\)/i'
+    ];
+
+    foreach ($patterns as $pattern) {
+        preg_match_all($pattern, $css, $matches);
+        if (!empty($matches[1])) {
+            foreach ($matches[1] as $url) {
+                // Skip data URLs
+                if (strpos($url, 'data:') === 0) continue;
+
+                // Handle protocol-relative URLs
+                if (strpos($url, '//') === 0) {
+                    $url = 'https:' . $url;
+                }
+
+                $resolved = resolveUrl($baseUrl, $url);
+                $normalizedResolved = normalizeUrl($resolved);
+                
+                // Skip empty or invalid URLs
+                if (empty($normalizedResolved) || !filter_var($normalizedResolved, FILTER_VALIDATE_URL)) {
+                    continue;
+                }
+
+                $parsed = parse_url($normalizedResolved);
+                $host = $parsed['host'] ?? '';
+                $path = $parsed['path'] ?? '/';
+
+                if ($host && $host !== $mainDomain) {
+                    info("External resource in CSS: $normalizedResolved", 'info');
+                    $stats['externalLinks'][] = $normalizedResolved;
+                    continue;
+                }
+
+                // Determine file extension from URL or content type
+                $extension = pathinfo($path, PATHINFO_EXTENSION);
+                if (empty($extension)) {
+                    // Try to determine extension from content type
+                    $mime = '';
+                    $data = fetchResource($normalizedResolved, $mime);
+                    if ($data !== false) {
+                        $extension = getExtensionFromMime($mime);
+                    }
+                }
+
+                if (substr($path, -1) === '/') $path .= 'index.html';
+                $normalizedPath = normalizePath($path);
+                if (empty($extension) && !str_ends_with($normalizedPath, '.html')) {
+                    $normalizedPath .= '.css';
+                }
+                $localPath = $outputDir . '/' . $normalizedPath;
+                $localDir = dirname($localPath);
+                ensureDirectoryExists($localDir);
+
+                if (!file_exists($localPath)) {
+                    progress("Downloading CSS resource: $normalizedResolved");
+                    $usedDate = '';
+                    $data = fetchResourceWithFallback($normalizedResolved, $date, $mainDomain, $usedDate);
+                    if ($data !== false) {
+                        file_put_contents($localPath, $data);
+                        success("CSS resource saved: $path");
+                        $stats['totalResources']++;
+                        if ($usedDate !== $date) $stats['foundViaFallback']++;
+                    } else {
+                        warning("CSS resource failed: $path", 'error');
+                        $stats['notFound']++;
+                        $stats['failedUrls'][] = $normalizedResolved;
+                    }
+                }
+
+                // Replace the URL in CSS with local path
+                $relativePath = substr($normalizedPath, strlen($outputDir) + 1);
+                $css = str_replace($url, $relativePath, $css);
+            }
+        }
+    }
+
+    return $css;
+}
+
+/**
+ * Get file extension from MIME type
+ */
+function getExtensionFromMime(string $mime): string {
+    $mimeMap = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/gif' => 'gif',
+        'image/webp' => 'webp',
+        'image/svg+xml' => 'svg',
+        'image/x-icon' => 'ico',
+        'font/ttf' => 'ttf',
+        'font/otf' => 'otf',
+        'font/woff' => 'woff',
+        'font/woff2' => 'woff2',
+        'application/x-font-ttf' => 'ttf',
+        'application/x-font-otf' => 'otf',
+        'application/font-woff' => 'woff',
+        'application/font-woff2' => 'woff2',
+        'text/css' => 'css'
+    ];
+
+    return $mimeMap[$mime] ?? '';
 }
 
 /**
  * Fetch a single resource with detailed error logging
  */
 function fetchResource(string $url, string &$mimeType = ''): string|false {
+    global $debugLevel;
     $ch = curl_init($url);
     $userAgent = getRandomUserAgent();
     $fingerprint = getRandomFingerprint();
-    
-    curl_setopt_array($ch, [
+    $curlOptions = [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HEADER => true,
         CURLOPT_TIMEOUT => 15,
         CURLOPT_USERAGENT => $userAgent,
-        CURLOPT_VERBOSE => true,
-        CURLOPT_STDERR => $verbose = fopen('php://temp', 'w+'),
         CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_SSL_VERIFYHOST => false,
         CURLOPT_HTTPHEADER => [
@@ -583,7 +861,13 @@ function fetchResource(string $url, string &$mimeType = ''): string|false {
             "Upgrade-Insecure-Requests: {$fingerprint['upgrade_insecure_requests']}",
             "DNT: {$fingerprint['dnt']}"
         ]
-    ]);
+    ];
+    $verbose = null;
+    if ($debugLevel === 'info') {
+        $curlOptions[CURLOPT_VERBOSE] = true;
+        $curlOptions[CURLOPT_STDERR] = $verbose = fopen('php://temp', 'w+');
+    }
+    curl_setopt_array($ch, $curlOptions);
 
     $response = curl_exec($ch);
     $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
@@ -592,67 +876,91 @@ function fetchResource(string $url, string &$mimeType = ''): string|false {
     $body = substr($response, $headerSize);
     $headers = substr($response, 0, $headerSize);
     
-    // Get verbose debug information
-    rewind($verbose);
-    $verboseLog = stream_get_contents($verbose);
-    
     $error = curl_error($ch);
     $errno = curl_errno($ch);
     $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
     $redirectCount = curl_getinfo($ch, CURLINFO_REDIRECT_COUNT);
     $totalTime = curl_getinfo($ch, CURLINFO_TOTAL_TIME);
     
+    if ($debugLevel === 'info' && $verbose) {
+        rewind($verbose);
+        $verboseLog = stream_get_contents($verbose);
+    } else {
+        $verboseLog = '';
+    }
     curl_close($ch);
 
-    // Log detailed error information
+    // Log detailed error information only if debugLevel is info
     if ($status !== 200 || $error) {
-        echo "   [×] Download failed for: $url\n";
-        echo "       Effective URL: $effectiveUrl\n";
-        echo "       Status code: $status\n";
-        echo "       Total time: {$totalTime}s\n";
-        echo "       Redirect count: $redirectCount\n";
-        
-        if ($error) {
-            echo "       cURL error ($errno): $error\n";
-        }
-        
-        echo "       Response headers:\n";
-        foreach (explode("\n", $headers) as $header) {
-            if (trim($header)) {
-                echo "         " . trim($header) . "\n";
+        if ($debugLevel === 'info') {
+            echo "   [×] Download failed for: $url\n";
+            echo "       Effective URL: $effectiveUrl\n";
+            echo "       Status code: $status\n";
+            echo "       Total time: {$totalTime}s\n";
+            echo "       Redirect count: $redirectCount\n";
+            if ($error) {
+                echo "       cURL error ($errno): $error\n";
             }
-        }
-        
-        // Show first 500 characters of response body for debugging
-        if (strlen($body) > 0) {
-            echo "       Response body preview:\n";
-            $preview = substr($body, 0, 500);
-            $preview = str_replace(["\r", "\n"], [' ', ' '], $preview);
-            echo "         " . $preview . "...\n";
-        }
-        
-        if ($verboseLog) {
-            echo "       Verbose log:\n";
-            foreach (explode("\n", $verboseLog) as $line) {
-                if (trim($line)) {
-                    echo "         " . trim($line) . "\n";
+            echo "       Response headers:\n";
+            foreach (explode("\n", $headers) as $header) {
+                if (trim($header)) {
+                    echo "         " . trim($header) . "\n";
                 }
             }
+            // Show first 500 characters of response body for debugging
+            if (strlen($body) > 0) {
+                echo "       Response body preview:\n";
+                $preview = substr($body, 0, 500);
+                $preview = str_replace(["\r", "\n"], [' ', ' '], $preview);
+                echo "         " . $preview . "...\n";
+            }
+            if ($verboseLog) {
+                echo "       Verbose log:\n";
+                foreach (explode("\n", $verboseLog) as $line) {
+                    if (trim($line)) {
+                        echo "         " . trim($line) . "\n";
+                    }
+                }
+            }
+        } else {
+            // Minimal error output for error mode
+            echo "   [×] Download failed for: $url\n";
         }
         return false;
     }
 
     // Check if the response is HTML and contains error message
     if (str_starts_with($mimeType, 'text/html')) {
-        if (str_contains($body, "Wayback Machine doesn't have that page archived") ||
-            str_contains($body, "This page is not available") ||
-            str_contains($body, "Page cannot be crawled or displayed")) {
-            echo "   [×] Wayback Machine error page detected\n";
-            echo "       Response preview:\n";
-            $preview = substr($body, 0, 500);
-            $preview = str_replace(["\r", "\n"], [' ', ' '], $preview);
-            echo "         " . $preview . "...\n";
-            return false;
+        $errorPatterns = [
+            "Wayback Machine doesn't have that page archived",
+            "This page is not available",
+            "Page cannot be crawled or displayed",
+            "404 Not Found",
+            "Not Found",
+            "The requested URL was not found",
+            "The page you're looking for doesn't exist",
+            "The page you requested could not be found",
+            "The requested resource was not found",
+            "The page you are looking for might have been removed",
+            "The page you are looking for might have been deleted",
+            "The page you are looking for might have been moved",
+            "The page you are looking for might have been renamed",
+            "The page you are looking for might have been archived",
+            "The page you are looking for might have been changed",
+            "The page you are looking for might have been updated",
+            "The page you are looking for might have been replaced",
+            "The page you are looking for might have been redirected",
+            "The page you are looking for might have been relocated",
+            "The page you are looking for might have been transferred"
+        ];
+
+        foreach ($errorPatterns as $pattern) {
+            if (stripos($body, $pattern) !== false) {
+                if ($debugLevel === 'info') {
+                    echo "   [×] Error page detected: $pattern\n";
+                }
+                return false;
+            }
         }
     }
 
@@ -666,36 +974,117 @@ function fetchResource(string $url, string &$mimeType = ''): string|false {
  * Fetch resource with fallback to previous snapshots
  */
 function fetchResourceWithFallback(string $url, string $date, string $mainDomain, ?string &$usedDate = null): string|false {
+    global $failedUrlsCache;
+
+    // Check if URL is in failed cache
+    if (isset($failedUrlsCache[$url])) {
+        echo "   [i] Skipping known failed URL: $url\n";
+        return false;
+    }
+
     $mime = '';
     $snapshotUrl = "https://web.archive.org/web/{$date}id_/{$url}";
     echo "   [i] Trying snapshot: $snapshotUrl\n";
+    
+    // First attempt with the original date
     $data = fetchResource($snapshotUrl, $mime);
     if ($data !== false) {
         $usedDate = $date;
         return $data;
     }
 
-    $encoded = urlencode($url);
-    $api = "https://web.archive.org/cdx/search/cdx?url={$encoded}&output=json&fl=timestamp&filter=statuscode:200&collapse=digest&to={$date}&limit=10&sort=reverse";
-    $json = @file_get_contents($api);
-    $entries = json_decode($json, true);
-    if (!$entries || count($entries) < 2) {
-        echo "   [×] CDX API returned no results\n";
-        return false;
-    }
-
-    array_shift($entries);
-    foreach ($entries as $entry) {
-        $prevDate = $entry[0];
-        $prevUrl = "https://web.archive.org/web/{$prevDate}id_/{$url}";
-        echo "   [i] Trying fallback snapshot: $prevUrl\n";
-        $mime = '';
-        $data = fetchResource($prevUrl, $mime);
+    // Try other formats for the original date
+    $formats = ['if_', 'im_'];
+    foreach ($formats as $format) {
+        $snapshotUrl = "https://web.archive.org/web/{$date}{$format}/{$url}";
+        echo "   [i] Trying {$format} format: $snapshotUrl\n";
+        $data = fetchResource($snapshotUrl, $mime);
         if ($data !== false) {
-            $usedDate = $prevDate;
+            $usedDate = $date;
             return $data;
         }
     }
+
+    // Try archive.org/wayback/available API
+    $encoded = urlencode($url);
+    $availableApi = "https://archive.org/wayback/available?url={$encoded}";
+    echo "   [i] Checking available API: $availableApi\n";
+    $json = @file_get_contents($availableApi);
+    $result = json_decode($json, true);
+    
+    if ($result && isset($result['archived_snapshots']['closest']['available']) && $result['archived_snapshots']['closest']['available']) {
+        $closest = $result['archived_snapshots']['closest'];
+        $snapshotUrl = $closest['url'];
+        $snapshotDate = $closest['timestamp'];
+        echo "   [i] Found available snapshot from {$snapshotDate}: $snapshotUrl\n";
+        
+        $data = fetchResource($snapshotUrl, $mime);
+        if ($data !== false) {
+            $usedDate = $snapshotDate;
+            return $data;
+        }
+    }
+
+    // Try CDX API to find available snapshots
+    $encoded = urlencode($url);
+    $api = "https://web.archive.org/cdx/search/cdx?url={$encoded}&output=json&fl=timestamp,original&filter=statuscode:200&collapse=digest&to={$date}&limit=20&sort=reverse";
+    $json = @file_get_contents($api);
+    $entries = json_decode($json, true);
+    
+    if (!$entries || count($entries) < 2) {
+        // Try CDX API with a broader search
+        $api = "https://web.archive.org/cdx/search/cdx?url={$encoded}&output=json&fl=timestamp,original&filter=statuscode:200&collapse=digest&limit=20&sort=reverse";
+        $json = @file_get_contents($api);
+        $entries = json_decode($json, true);
+        
+        if (!$entries || count($entries) < 2) {
+            // Try CDX API with a more permissive filter
+            $api = "https://web.archive.org/cdx/search/cdx?url={$encoded}&output=json&fl=timestamp,original&collapse=digest&limit=20&sort=reverse";
+            $json = @file_get_contents($api);
+            $entries = json_decode($json, true);
+            
+            if (!$entries || count($entries) < 2) {
+                // Try CDX API with a broader URL pattern
+                $baseUrl = preg_replace('/\/[^\/]*$/', '', $url);
+                $api = "https://web.archive.org/cdx/search/cdx?url={$baseUrl}/*&output=json&fl=timestamp,original&filter=statuscode:200&collapse=digest&limit=20&sort=reverse";
+                $json = @file_get_contents($api);
+                $entries = json_decode($json, true);
+                
+                if (!$entries || count($entries) < 2) {
+                    echo "   [×] CDX API returned no results\n";
+                    $failedUrlsCache[$url] = true;
+                    return false;
+                }
+            }
+        }
+    }
+
+    array_shift($entries); // Remove header row
+    foreach ($entries as $entry) {
+        $prevDate = $entry[0];
+        $originalUrl = $entry[1] ?? $url; // Use original URL from CDX if available
+        
+        // Try all formats for each timestamp
+        $formats = ['id_', 'if_', 'im_'];
+        foreach ($formats as $format) {
+            $prevUrl = "https://web.archive.org/web/{$prevDate}{$format}/{$originalUrl}";
+            echo "   [i] Trying fallback snapshot: $prevUrl\n";
+            $mime = '';
+            $data = fetchResource($prevUrl, $mime);
+            if ($data !== false) {
+                $usedDate = $prevDate;
+                return $data;
+            }
+
+            // If we got a 404, try next format
+            if (strpos($mime, '404') !== false || strpos($mime, 'Not Found') !== false) {
+                continue;
+            }
+        }
+    }
+
+    // If we've tried all fallback dates and still failed, add to cache
+    $failedUrlsCache[$url] = true;
     return false;
 }
 
@@ -802,4 +1191,49 @@ function getRandomFingerprint(): array {
         'upgrade_insecure_requests' => '1',
         'dnt' => rand(0, 1) ? '1' : '0'
     ];
+}
+
+// Replace all instances of mkdir with a safer version
+function ensureDirectoryExists(string $dir): void {
+    if (!is_dir($dir)) {
+        mkdir($dir, 0777, true);
+    }
+}
+
+/**
+ * Try to find a snapshot using the available API
+ */
+function tryAvailableApiSnapshot(string $url, string &$usedDate = null): string|false {
+    static $checkedUrls = [];
+    
+    // Prevent infinite loops by tracking checked URLs
+    if (isset($checkedUrls[$url])) {
+        return false;
+    }
+    $checkedUrls[$url] = true;
+    
+    $encoded = urlencode($url);
+    $availableApi = "https://archive.org/wayback/available?url={$encoded}";
+    echo "   [i] Checking available API: $availableApi\n";
+    
+    $json = @file_get_contents($availableApi);
+    $result = json_decode($json, true);
+    
+    if ($result && isset($result['archived_snapshots']['closest']['available']) && $result['archived_snapshots']['closest']['available']) {
+        $closest = $result['archived_snapshots']['closest'];
+        $snapshotUrl = $closest['url'];
+        $snapshotDate = $closest['timestamp'];
+        echo "   [i] Found available snapshot from {$snapshotDate}: $snapshotUrl\n";
+        
+        $mime = '';
+        $data = fetchResource($snapshotUrl, $mime);
+        if ($data !== false) {
+            $usedDate = $snapshotDate;
+            return $data;
+        }
+    }else {
+        echo "   [i] Not Found available snapshot from " . $json . "\n";
+    }
+    
+    return false;
 }
