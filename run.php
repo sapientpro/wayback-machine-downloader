@@ -8,11 +8,12 @@
  */
 
 if ($argc < 3) {
-    exit("Usage: php run.php <domain> <date YYYYMMDD> [debug_level] [skip_existing] [max_urls]\n" .
+    exit("Usage: php run.php <domain> <date YYYYMMDD> [debug_level] [skip_existing] [max_urls] [skip_urls]\n" .
          "Parameters:\n" .
          "  debug_level   - Show only errors (error) or all info (info, default)\n" .
          "  skip_existing - Skip URLs that already have files (1) or download all (0, default)\n" .
-         "  max_urls      - Maximum number of URLs to process (default: 50)\n");
+         "  max_urls      - Maximum number of URLs to process (default: 50)\n" .
+         "  skip_urls     - Comma-separated list of URL patterns to skip (e.g. 'parking.php,/edit/')\n");
 }
 
 // Configuration
@@ -21,6 +22,7 @@ $date = $argv[2];
 $debugLevel = $argv[3] ?? 'info';
 $skipExisting = isset($argv[4]) ? (bool)$argv[4] : false;
 $maxPages = isset($argv[5]) ? (int)$argv[5] : 50;
+$skipUrls = isset($argv[6]) ? explode(',', $argv[6]) : [];
 $outputDir = "output/{$domain}";
 $missingLogFile = "output/{$domain}/missing.log";
 
@@ -35,7 +37,8 @@ $stats = [
     'sitemap' => [],
     'visitedPages' => [],
     'skippedExisting' => 0,
-    'totalUrlsFound' => 0  // New counter for all URLs found
+    'totalUrlsFound' => 0,  // New counter for all URLs found
+    'skippedUrls' => []     // New counter for skipped URLs
 ];
 
 // Add this after the stats initialization
@@ -155,7 +158,6 @@ function transformUrlToStaticPath(string $url): string {
 
     $path = $parsed['path'] ?? '/';
     $query = isset($parsed['query']) ? $parsed['query'] : '';
-    $fragment = isset($parsed['fragment']) ? $parsed['fragment'] : '';
     
     // Handle query parameters
     if (!empty($query)) {
@@ -179,25 +181,27 @@ function transformUrlToStaticPath(string $url): string {
     // Remove trailing slash if exists
     $path = rtrim($path, '/');
     
+    // Get file extension
+    $extension = pathinfo($path, PATHINFO_EXTENSION);
+    
+    // List of dynamic file extensions that should be converted to index.html
+    $dynamicExtensions = ['php', 'asp', 'aspx', 'jsp', 'cgi', 'pl', 'py', 'rb'];
+    
     // Handle root path
     if ($path === '' || $path === '/') {
         $path = 'index.html';
     }
-    // Handle .php files
-    else if (preg_match('/\.php$/', $path)) {
-        $path = preg_replace('/\.php$/', '/index.html', $path);
+    // Handle dynamic files
+    else if (in_array(strtolower($extension), $dynamicExtensions)) {
+        $path = preg_replace('/\.' . preg_quote($extension, '/') . '$/', '/index.html', $path);
     }
     // Handle paths that don't have an extension
-    else if (!preg_match('/\.[a-zA-Z0-9]+$/', $path)) {
+    else if (empty($extension)) {
         $path .= '/index.html';
     }
-    // Handle paths with extensions
+    // For static files (js, css, images, etc.), keep the original extension
     else {
-        // Get the directory and filename without extension
-        $dir = dirname($path);
-        $filename = pathinfo($path, PATHINFO_FILENAME);
-        // Create directory structure with index.html
-        $path = $dir . '/' . $filename . '/index.html';
+        // No transformation needed, keep the original path with extension
     }
     
     // For absolute URLs, reconstruct with scheme and host
@@ -207,6 +211,26 @@ function transformUrlToStaticPath(string $url): string {
     
     // For relative URLs, just return the path
     return $path;
+}
+
+/**
+ * Check if URL is a web archive URL
+ */
+function isWebArchiveUrl(string $url): bool {
+    $patterns = [
+        '/web\.archive\.org/',
+        '/archive\.org/',
+        '/web\/\d+/',  // Matches /web/20070819131312
+        '/wayback\//',
+        '/web\/\d+\*/' // Matches /web/20070819131312*
+    ];
+    
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $url)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Fetch initial page list via CDX API
@@ -257,10 +281,35 @@ if (!$entries || count($entries) < 2) {
     success("Found " . count($pendingPages) . " pages via CDX API");
 }
 
+/**
+ * Check if URL should be skipped based on patterns
+ */
+function shouldSkipUrl(string $url, array $skipPatterns): bool {
+    foreach ($skipPatterns as $pattern) {
+        if (strpos($url, $pattern) !== false) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Process pages
 while (!empty($pendingPages) && $stats['totalPages'] < $maxPages) {
     $url = array_shift($pendingPages);
     $normalizedUrl = normalizeUrl($url);
+    
+    // Skip web archive URLs
+    if (isWebArchiveUrl($normalizedUrl)) {
+        warning("Skipped (Web Archive URL): $normalizedUrl", 'info');
+        continue;
+    }
+    
+    // Skip URLs matching skip patterns
+    if (shouldSkipUrl($normalizedUrl, $skipUrls)) {
+        warning("Skipped (Matches skip pattern): $normalizedUrl", 'info');
+        $stats['skippedUrls'][] = $normalizedUrl;
+        continue;
+    }
     
     if (isset($stats['visitedPages'][$normalizedUrl])) {
         echo "   [i] Skipping already visited URL: $normalizedUrl\n";
@@ -511,6 +560,13 @@ if (!empty($stats['externalLinks'])) {
     }
 }
 
+if (!empty($stats['skippedUrls'])) {
+    echo "\n[ℹ] Skipped URLs (matching patterns):\n";
+    foreach ($stats['skippedUrls'] as $surl) {
+        echo " - $surl\n";
+    }
+}
+
 // Print summary
 echo "\n=== SUMMARY ===\n";
 echo "• Total pages processed:        {$stats['totalPages']}\n";
@@ -680,6 +736,19 @@ function processHtml(string $html, string $baseUrl, string $date, string $output
             // Skip empty or invalid URLs
             if (empty($normalizedResolved) || !filter_var($normalizedResolved, FILTER_VALIDATE_URL)) {
                 warning("Invalid URL: $rawAttr", 'error');
+                continue;
+            }
+
+            // Skip web archive URLs
+            if (isWebArchiveUrl($normalizedResolved)) {
+                warning("Skipped (Web Archive URL): $normalizedResolved", 'info');
+                continue;
+            }
+
+            // Skip URLs matching skip patterns
+            if (shouldSkipUrl($normalizedResolved, $GLOBALS['skipUrls'])) {
+                warning("Skipped (Matches skip pattern): $normalizedResolved", 'info');
+                $stats['skippedUrls'][] = $normalizedResolved;
                 continue;
             }
 
@@ -1220,9 +1289,12 @@ function tryAvailableApiSnapshot(string $url, string &$usedDate = null): string|
     
     if ($result && isset($result['archived_snapshots']['closest']['available']) && $result['archived_snapshots']['closest']['available']) {
         $closest = $result['archived_snapshots']['closest'];
-        $snapshotUrl = $closest['url'];
         $snapshotDate = $closest['timestamp'];
-        echo "   [i] Found available snapshot from {$snapshotDate}: $snapshotUrl\n";
+        echo "   [i] Found available snapshot from {$snapshotDate}\n";
+        
+        // Construct the correct URL format
+        $snapshotUrl = "https://web.archive.org/web/{$snapshotDate}id_/{$url}";
+        echo "   [i] Using snapshot URL: $snapshotUrl\n";
         
         $mime = '';
         $data = fetchResource($snapshotUrl, $mime);
@@ -1230,7 +1302,7 @@ function tryAvailableApiSnapshot(string $url, string &$usedDate = null): string|
             $usedDate = $snapshotDate;
             return $data;
         }
-    }else {
+    } else {
         echo "   [i] Not Found available snapshot from " . $json . "\n";
     }
     

@@ -1,176 +1,140 @@
-# Wayback Machine Downloader - Web Archive Extractor
+# Wayback Machine Downloader
 
-A powerful PHP script for downloading and archiving complete website snapshots from the Internet Archive's Wayback Machine. This tool helps developers, researchers, and digital archivists preserve web content by downloading historical versions of websites with all their resources.
+A powerful PHP script to download and process archived websites from the Wayback Machine. This tool helps you create static versions of archived websites, perfect for preservation, offline access, or migration to modern hosting platforms.
 
-## Key Features
+## Features
 
-- **Complete Website Archiving**: Download full website snapshots with HTML, CSS, JavaScript, and media files
-- **Smart Resource Handling**: Automatic processing of all website assets and dependencies
-- **Intelligent URL Management**: Advanced URL normalization and deduplication
-- **Browser Emulation**: Random browser fingerprinting to avoid detection
-- **Flexible Configuration**: Customizable download limits and existing file handling
-- **Comprehensive Logging**: Detailed error tracking and download statistics
-- **Archive.org Integration**: Direct integration with Wayback Machine's APIs
-- **Resource Preservation**: Maintains original website structure and file organization
+- **Smart URL Processing**: Automatically transforms dynamic URLs into static file paths
+- **Resource Handling**: Downloads and processes all linked resources (images, CSS, JavaScript)
+- **Broken Link Management**: Intelligently handles broken links and missing resources
+- **CloudFlare Integration**: Generates CloudFlare Functions for dynamic URL handling
+- **SEO-Friendly Output**: Creates clean, static HTML files with proper URL structure
+- **Query Parameter Support**: Handles URLs with query parameters by converting them to directory structures
+- **Root Path Preservation**: Maintains proper handling of root paths and index files
+- **External Link Management**: Adds rel="nofollow" to external links for SEO best practices
+- **Static Site Generation**: Creates a complete static site ready for deployment
 
-## Use Cases
+## Requirements
 
-This tool is perfect for:
+- PHP 7.4 or higher
+- cURL extension
+- DOM extension
+- JSON extension
 
-- **Wayback Machine Archiving & Downloading**: Download complete snapshots from the Internet Archive's Wayback Machine, perfect for web archive extraction and preservation
-- **Internet Archive Content Extraction**: Extract and preserve historical web content from web archives, including all resources and dependencies
-- **Website Backup & Recovery**: Create local backups of historical website versions for disaster recovery and content preservation
-- **Digital Preservation**: Archive important web content before it disappears, maintaining a complete web archive of your digital assets
-- **Content Migration**: Download old website versions for content transfer to new platforms, preserving the original structure
-- **Historical Research**: Access and analyze past versions of websites for research purposes, with full web archive support
-- **SEO Analysis**: Study historical changes in website structure and content through wayback machine snapshots
-- **Legal Compliance**: Maintain archives of web content for legal or regulatory requirements, with complete web archive extraction
-- **Website Development**: Compare different versions of a website during development using wayback machine downloads
-- **Content Auditing**: Review historical content changes and updates through internet archive snapshots
-- **Brand Monitoring**: Track changes in brand presence and messaging over time with web archive tools
-- **Competitive Analysis**: Archive competitor websites for historical comparison using wayback machine extractors
+## Installation
 
-## Technical Requirements
+1. Clone this repository:
+```bash
+git clone https://github.com/yourusername/wayback-machine-downloader.git
+cd wayback-machine-downloader
+```
 
-- PHP 7.4+ with modern extensions
-- cURL for HTTP requests
-- DOM for HTML parsing
-- JSON for API communication
-- Write permissions for file operations
+2. Ensure PHP and required extensions are installed:
+```bash
+php -m | grep -E 'curl|dom|json'
+```
 
-## Quick Start
+## Usage
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/wayback-machine-downloader.git
-   ```
+### Step 1: Download the Website
 
-2. Make the script executable:
-   ```bash
-   chmod +x run.php
-   ```
-
-3. Run the downloader:
-   ```bash
-   php run.php example.com 20240321
-   ```
-
-## Advanced Usage
-
-The script supports various parameters for fine-tuning the download process:
+Use `run.php` to download the website from the Wayback Machine:
 
 ```bash
-php run.php <domain> <date YYYYMMDD> [debug_level] [skip_existing] [max_urls]
+php run.php <domain> <date> [debug_level] [skip_existing] [max_urls] [skip_urls]
 ```
 
-### Parameter Details
+Parameters:
+- `domain`: The domain to download (e.g., example.com)
+- `date`: Target date in YYYYMMDD format
+- `debug_level`: Show only errors (error) or all info (info, default)
+- `skip_existing`: Skip URLs that already have files (1) or download all (0, default)
+- `max_urls`: Maximum number of URLs to process (default: 50)
+- `skip_urls`: Comma-separated list of URL patterns to skip (e.g., 'parking.php,/edit/')
 
-- `domain`: Target website domain (e.g., example.com)
-- `date`: Archive date in YYYYMMDD format
-- `debug_level`: 'error' for minimal output, 'info' for detailed logging
-- `skip_existing`: 1 to skip downloaded files, 0 to download all
-- `max_urls`: Maximum number of pages to process
-
-### Usage Examples
-
-Basic website archiving:
+Example:
 ```bash
-php run.php example.com 20240321
+php run.php example.com 20200101 info 0 100 "parking.php,/edit/"
 ```
 
-Archiving with error-only logging:
+### Step 2: Process the Downloaded Files
+
+Use `process.php` to create a static version of the website:
+
 ```bash
-php run.php example.com 20240321 error
+php process.php <domain>
 ```
 
-Incremental archiving (skip existing):
-```bash
-php run.php example.com 20240321 info 1
-```
+This will:
+- Process all downloaded files
+- Create a static site structure
+- Handle broken links and resources
+- Generate CloudFlare Functions for dynamic URLs
+- Create a `_redirects` file for URL mapping
 
-Large site archiving (100 pages):
-```bash
-php run.php example.com 20240321 info 0 100
-```
+## Output Structure
 
-## Output Organization
-
-The script creates a structured archive in the `output` directory:
+The processed website will be available in the `processed/<domain>` directory:
 
 ```
-output/
+processed/
 └── example.com/
-    ├── index.html          # Homepage
-    ├── sitemap.txt         # Page index
-    ├── missing.log         # Error tracking
-    └── [resources]/        # Website assets
+    ├── public/           # Static files
+    │   ├── index.html
+    │   ├── _redirects    # URL mapping rules
+    │   └── ...
+    └── functions/        # CloudFlare Functions
+        └── ...
 ```
 
-## Advanced Features
+## URL Transformation
 
-### Smart Browser Emulation
-- Dynamic user agent rotation
-- Realistic browser fingerprints
-- Platform-specific headers
-- Security policy emulation
+The script handles various URL patterns:
 
-### Intelligent Error Handling
-- Detailed error logging
-- HTTP status tracking
-- Archive.org reference detection
-- Empty response handling
-- Automatic retry mechanism
+- Dynamic URLs: `/page.php` → `/page/index.html`
+- Query Parameters: `/page.php?id=123` → `/page/id_123/index.html`
+- Root Path: `/` → `/index.html`
+- Static Files: `/style.css` → `/style.css` (unchanged)
 
-### URL Processing
-- Fragment removal
-- Path normalization
-- Query preservation
-- Protocol handling
-- Relative URL resolution
+## CloudFlare Integration
 
-### Resource Management
-- Directory structure preservation
-- File existence verification
-- MIME type detection
-- Resource deduplication
-- External link tracking
+For URLs with query parameters, the script generates CloudFlare Functions that:
+- Handle dynamic URL patterns
+- Maintain proper URL structure
+- Support SEO-friendly URLs
+- Preserve query parameter functionality
 
-## Development and Debugging
+## SEO Optimization
 
-### Logging System
-```
-=== Missing URLs for example.com (20240321) ===
-Format: URL | Error | Timestamp
-----------------------------------------
-https://example.com/page.html | Connection timeout | 2024-03-21 15:30:45
-```
+The processed output is optimized for search engines:
+- Clean URL structure
+- Proper HTML semantics
+- External link handling
+- Resource optimization
+- Mobile-friendly output
 
-### Console Feedback
-- [...] Progress updates
-- [✓] Success confirmations
-- [×] Error notifications
-- [↗] Information messages
+## Common Use Cases
 
-## Best Practices
+- Website Preservation
+- Content Migration
+- Static Site Generation
+- Archive Access
+- Historical Research
+- Content Recovery
+- SEO Optimization
+- CloudFlare Deployment
 
-- Respect Wayback Machine's rate limits
-- Monitor missing.log for failed downloads
-- Use appropriate max_urls for large sites
-- Enable skip_existing for incremental updates
-- Check error logs for optimization opportunities
+## Contributing
 
-## Troubleshooting Guide
-
-Common issues and solutions:
-1. Check missing.log for detailed error information
-2. Verify PHP version and extension availability
-3. Confirm directory permissions
-4. Test internet connectivity
-5. Adjust retry parameters if needed
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is open source and available under the MIT License.
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Keywords
+
+wayback machine, web archive, static site generator, website preservation, content migration, archive access, historical research, content recovery, SEO optimization, CloudFlare deployment, PHP script, static site, URL transformation, broken link handling, resource management, query parameters, dynamic URLs, website backup, archive downloader, web preservation tool
 
 ---
 
