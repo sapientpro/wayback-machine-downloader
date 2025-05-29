@@ -533,8 +533,8 @@ function processInternalLinks(string $html, string $domain, string $publicDir): 
             echo "Converted to absolute URL: $href\n";
         }
         
-        // Skip invalid URLs
-        if (!filter_var($href, FILTER_VALIDATE_URL)) {
+        // Skip invalid URLs (check the converted URL, not the original)
+        if (strpos($originalHref, 'http') === 0 && !filter_var($href, FILTER_VALIDATE_URL)) {
             echo "Skipping invalid URL\n";
             continue;
         }
