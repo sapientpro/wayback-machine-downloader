@@ -295,7 +295,7 @@ export async function onRequest(context) {
   
   // Create path with parameters
   const paramPath = Object.entries(paramValues)
-    .map(([key, value]) => `\${key}_\${value}`)
+    .map(([key, value]) => key + '_' + value)
     .join('_');
   
   // Remove trailing slash if exists
@@ -307,11 +307,11 @@ export async function onRequest(context) {
   }
   
   // Add index.html for paths without extension
-  if (!path.match(/\.[a-zA-Z0-9]+\$/)) {
+  if (!path.match(/\.[a-zA-Z0-9]+$/)) {
     path += '/index.html';
   }
   
-  const response = await fetch(\`https://{$domain}\${path}\`);
+  const response = await fetch('https://{$domain}' + path);
   return response;
 }
 JS;
