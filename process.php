@@ -10,6 +10,32 @@
  * 4. Create _redirects file for CloudFlare
  */
 
+/**
+ * Check if a URL is external to the given domain
+ */
+function isExternalUrl(string $url, string $domain): bool {
+    // Handle relative URLs - they are always internal
+    if (strpos($url, '/') === 0 && strpos($url, '//') !== 0) {
+        return false;
+    }
+    
+    // Parse the URL to get hostname
+    $parsed = parse_url($url);
+    $host = $parsed['host'] ?? '';
+    
+    // If no host, it's not external
+    if (empty($host)) {
+        return false;
+    }
+    
+    // Normalize both hostnames for comparison (remove www. only if it's a subdomain)
+    $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
+    $normalizedHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $host);
+    
+    // Compare normalized hostnames
+    return $normalizedHost !== $normalizedDomain;
+}
+
 if ($argc < 2) {
     exit("Usage: php process.php <domain>\n");
 }
@@ -113,10 +139,11 @@ foreach ($htmlFiles as $file) {
             if (empty($url)) continue;
 
             // Handle external URLs
-            if (strpos($url, 'http') === 0 && !str_contains($url, $domain)) {
+            if (strpos($url, 'http') === 0 && isExternalUrl($url, $domain)) {
                 // Add rel="nofollow" to external links
                 if ($tagInfo['tag'] === 'a') {
                     $node->setAttribute('rel', 'nofollow');
+                    echo "Added rel=\"nofollow\" to external link: $url\n";
                 }
                 continue;
             }
@@ -125,10 +152,11 @@ foreach ($htmlFiles as $file) {
             if (preg_match('#/web/\d+[a-z_]{0,3}/(https?://[^"\'>]+)#', $url, $m)) {
                 $url = $m[1];
                 // Check if the extracted URL is external
-                if (!str_contains($url, $domain)) {
+                if (isExternalUrl($url, $domain)) {
                     // Add rel="nofollow" to external links
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
+                        echo "Added rel=\"nofollow\" to external Wayback link: $url\n";
                     }
                     continue;
                 }
@@ -138,10 +166,11 @@ foreach ($htmlFiles as $file) {
             if (strpos($url, '//') === 0) {
                 $url = 'https:' . $url;
                 // Check if the protocol-relative URL is external
-                if (!str_contains($url, $domain)) {
+                if (isExternalUrl($url, $domain)) {
                     // Add rel="nofollow" to external links
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
+                        echo "Added rel=\"nofollow\" to external protocol-relative link: $url\n";
                     }
                     continue;
                 }
@@ -209,11 +238,9 @@ foreach ($htmlFiles as $file) {
                 // Skip adding root path redirect
                 if ($transformedPath !== $path && $path !== '/') {
                     if ($hasQueryParams) {
-                        // Check if this is an external URL
-                        $parsedUrl = parse_url($url);
-                        $urlHost = $parsedUrl['host'] ?? '';
-                        if (!empty($urlHost) && $urlHost !== $domain) {
-                            echo "Skipping external URL: $url\n";
+                        // Check if this is an external URL using helper function
+                        if (isExternalUrl($url, $domain)) {
+                            echo "Skipping external URL for CloudFlare function: $url\n";
                             continue;
                         }
 
@@ -472,9 +499,6 @@ function processInternalLinks(string $html, string $domain, string $publicDir): 
     @$dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
     $xpath = new DOMXPath($dom);
     
-    // Normalize domain for comparison (remove www. only if it's a subdomain)
-    $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
-    
     // Find all internal links
     $links = $xpath->query("//a[@href]");
     foreach ($links as $link) {
@@ -496,20 +520,10 @@ function processInternalLinks(string $html, string $domain, string $publicDir): 
             continue;
         }
         
-        // Check if this is an external URL (absolute URL with different domain)
-        if (strpos($href, 'http') === 0) {
-            // Parse the URL to get the host
-            $parsed = parse_url($href);
-            $host = $parsed['host'] ?? '';
-            
-            // Normalize host for comparison (remove www. only if it's a subdomain)
-            $normalizedHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $host);
-            
-            // Check if it's external by comparing normalized hostnames
-            if ($host && $normalizedHost !== $normalizedDomain) {
-                echo "External URL detected, skipping: $href (host: $normalizedHost vs domain: $normalizedDomain)\n";
-                continue;
-            }
+        // Check if this is an external URL and skip it
+        if (isExternalUrl($href, $domain)) {
+            echo "External URL detected, skipping: $href\n";
+            continue;
         }
         
         // Handle relative URLs by converting to absolute for processing
@@ -525,20 +539,8 @@ function processInternalLinks(string $html, string $domain, string $publicDir): 
             continue;
         }
         
-        // Parse URL to check if it's internal
+        // Parse URL to get path and query
         $parsed = parse_url($href);
-        $host = $parsed['host'] ?? '';
-        
-        // Normalize host for comparison (remove www. only if it's a subdomain)
-        $normalizedHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $host);
-        
-        // Double-check that this is truly an internal URL
-        if ($host && $normalizedHost !== $normalizedDomain) {
-            echo "External link detected by hostname check, skipping (host: $normalizedHost vs domain: $normalizedDomain)\n";
-            continue;
-        }
-        
-        // Get the path and transform it to static path
         $path = $parsed['path'] ?? '/';
         $query = isset($parsed['query']) ? $parsed['query'] : '';
         
