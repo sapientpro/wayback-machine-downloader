@@ -113,19 +113,31 @@ foreach ($htmlFiles as $file) {
             if (empty($url)) continue;
 
             // Handle external URLs
-            if (strpos($url, 'http') === 0 && !str_contains($url, $domain)) {
-                // Add rel="nofollow" to external links
-                if ($tagInfo['tag'] === 'a') {
-                    $node->setAttribute('rel', 'nofollow');
+            if (strpos($url, 'http') === 0) {
+                $parsedUrl = parse_url($url);
+                $urlHost = $parsedUrl['host'] ?? '';
+                $normalizedUrlHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $urlHost);
+                $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
+                
+                if ($urlHost && $normalizedUrlHost !== $normalizedDomain) {
+                    // Add rel="nofollow" to external links
+                    if ($tagInfo['tag'] === 'a') {
+                        $node->setAttribute('rel', 'nofollow');
+                    }
+                    continue;
                 }
-                continue;
             }
 
             // Extract original URL from Wayback Machine URL
             if (preg_match('#/web/\d+[a-z_]{0,3}/(https?://[^"\'>]+)#', $url, $m)) {
                 $url = $m[1];
                 // Check if the extracted URL is external
-                if (!str_contains($url, $domain)) {
+                $parsedUrl = parse_url($url);
+                $urlHost = $parsedUrl['host'] ?? '';
+                $normalizedUrlHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $urlHost);
+                $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
+                
+                if ($urlHost && $normalizedUrlHost !== $normalizedDomain) {
                     // Add rel="nofollow" to external links
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
@@ -138,7 +150,12 @@ foreach ($htmlFiles as $file) {
             if (strpos($url, '//') === 0) {
                 $url = 'https:' . $url;
                 // Check if the protocol-relative URL is external
-                if (!str_contains($url, $domain)) {
+                $parsedUrl = parse_url($url);
+                $urlHost = $parsedUrl['host'] ?? '';
+                $normalizedUrlHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $urlHost);
+                $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
+                
+                if ($urlHost && $normalizedUrlHost !== $normalizedDomain) {
                     // Add rel="nofollow" to external links
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
@@ -212,7 +229,10 @@ foreach ($htmlFiles as $file) {
                         // Check if this is an external URL
                         $parsedUrl = parse_url($url);
                         $urlHost = $parsedUrl['host'] ?? '';
-                        if (!empty($urlHost) && $urlHost !== $domain) {
+                        $normalizedUrlHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $urlHost);
+                        $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
+                        
+                        if ($urlHost && $normalizedUrlHost !== $normalizedDomain) {
                             echo "Skipping external URL: $url\n";
                             continue;
                         }
