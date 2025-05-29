@@ -295,7 +295,7 @@ export async function onRequest(context) {
   
   // Create path with parameters
   const paramPath = Object.entries(paramValues)
-    .map(([key, value]) => \`\${key}_\${value}\`)
+    .map(([key, value]) => `\${key}_\${value}`)
     .join('_');
   
   // Remove trailing slash if exists
