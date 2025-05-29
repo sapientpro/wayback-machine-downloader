@@ -307,7 +307,7 @@ JS;
         $style->textContent = $processedCss;
     }
 
-    // Process internal links to remove broken ones
+    // Process internal links to remove broken ones with text
     $html = $dom->saveHTML();
     if ($html === false) {
         echo "Failed to save HTML for link processing: $targetPath\n";
@@ -472,6 +472,9 @@ function processInternalLinks(string $html, string $domain, string $publicDir): 
     @$dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
     $xpath = new DOMXPath($dom);
     
+    // Normalize domain for comparison (remove www. only if it's a subdomain)
+    $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
+    
     // Find all internal links
     $links = $xpath->query("//a[@href]");
     foreach ($links as $link) {
@@ -509,9 +512,13 @@ function processInternalLinks(string $html, string $domain, string $publicDir): 
         $parsed = parse_url($href);
         $host = $parsed['host'] ?? '';
         
-        // Skip external links
-        if ($host && $host !== $domain) {
-            echo "Skipping external link\n";
+        // Normalize host for comparison (remove www. only if it's a subdomain)
+        $normalizedHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $host);
+        
+        // Handle external links - add rel="nofollow" instead of removing
+        if ($host && $normalizedHost !== $normalizedDomain) {
+            echo "External link detected, adding rel=\"nofollow\"\n";
+            $link->setAttribute('rel', 'nofollow');
             continue;
         }
         
