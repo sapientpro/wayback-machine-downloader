@@ -113,31 +113,19 @@ foreach ($htmlFiles as $file) {
             if (empty($url)) continue;
 
             // Handle external URLs
-            if (strpos($url, 'http') === 0) {
-                $parsedUrl = parse_url($url);
-                $urlHost = $parsedUrl['host'] ?? '';
-                $normalizedUrlHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $urlHost);
-                $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
-                
-                if ($urlHost && $normalizedUrlHost !== $normalizedDomain) {
-                    // Add rel="nofollow" to external links
-                    if ($tagInfo['tag'] === 'a') {
-                        $node->setAttribute('rel', 'nofollow');
-                    }
-                    continue;
+            if (strpos($url, 'http') === 0 && !str_contains($url, $domain)) {
+                // Add rel="nofollow" to external links
+                if ($tagInfo['tag'] === 'a') {
+                    $node->setAttribute('rel', 'nofollow');
                 }
+                continue;
             }
 
             // Extract original URL from Wayback Machine URL
             if (preg_match('#/web/\d+[a-z_]{0,3}/(https?://[^"\'>]+)#', $url, $m)) {
                 $url = $m[1];
                 // Check if the extracted URL is external
-                $parsedUrl = parse_url($url);
-                $urlHost = $parsedUrl['host'] ?? '';
-                $normalizedUrlHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $urlHost);
-                $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
-                
-                if ($urlHost && $normalizedUrlHost !== $normalizedDomain) {
+                if (!str_contains($url, $domain)) {
                     // Add rel="nofollow" to external links
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
@@ -150,12 +138,7 @@ foreach ($htmlFiles as $file) {
             if (strpos($url, '//') === 0) {
                 $url = 'https:' . $url;
                 // Check if the protocol-relative URL is external
-                $parsedUrl = parse_url($url);
-                $urlHost = $parsedUrl['host'] ?? '';
-                $normalizedUrlHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $urlHost);
-                $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
-                
-                if ($urlHost && $normalizedUrlHost !== $normalizedDomain) {
+                if (!str_contains($url, $domain)) {
                     // Add rel="nofollow" to external links
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
@@ -229,10 +212,7 @@ foreach ($htmlFiles as $file) {
                         // Check if this is an external URL
                         $parsedUrl = parse_url($url);
                         $urlHost = $parsedUrl['host'] ?? '';
-                        $normalizedUrlHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $urlHost);
-                        $normalizedDomain = preg_replace('/^www\.(?=[^.]+\.)/', '', $domain);
-                        
-                        if ($urlHost && $normalizedUrlHost !== $normalizedDomain) {
+                        if (!empty($urlHost) && $urlHost !== $domain) {
                             echo "Skipping external URL: $url\n";
                             continue;
                         }
@@ -516,7 +496,24 @@ function processInternalLinks(string $html, string $domain, string $publicDir): 
             continue;
         }
         
-        // Handle relative URLs
+        // Check if this is an external URL (absolute URL with different domain)
+        if (strpos($href, 'http') === 0) {
+            // Parse the URL to get the host
+            $parsed = parse_url($href);
+            $host = $parsed['host'] ?? '';
+            
+            // Normalize host for comparison (remove www. only if it's a subdomain)
+            $normalizedHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $host);
+            
+            // Check if it's external by comparing normalized hostnames
+            if ($host && $normalizedHost !== $normalizedDomain) {
+                echo "External URL detected, skipping: $href (host: $normalizedHost vs domain: $normalizedDomain)\n";
+                continue;
+            }
+        }
+        
+        // Handle relative URLs by converting to absolute for processing
+        $originalHref = $href;
         if (strpos($href, '/') === 0) {
             $href = "https://{$domain}{$href}";
             echo "Converted to absolute URL: $href\n";
@@ -535,10 +532,9 @@ function processInternalLinks(string $html, string $domain, string $publicDir): 
         // Normalize host for comparison (remove www. only if it's a subdomain)
         $normalizedHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $host);
         
-        // Handle external links - add rel="nofollow" instead of removing
+        // Double-check that this is truly an internal URL
         if ($host && $normalizedHost !== $normalizedDomain) {
-            echo "External link detected, adding rel=\"nofollow\"\n";
-            $link->setAttribute('rel', 'nofollow');
+            echo "External link detected by hostname check, skipping (host: $normalizedHost vs domain: $normalizedDomain)\n";
             continue;
         }
         
