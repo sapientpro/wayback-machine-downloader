@@ -273,11 +273,7 @@ foreach ($htmlFiles as $file) {
 
     // Remove XML declarations and meta tags based on selectors
     foreach ($removeEncodingTags as $selector) {
-        if (strpos($selector, '<?xml') === 0) {
-            // Handle XML declaration as string
-            $html = str_replace($selector, '', $html);
-            echo "Removed XML declaration: $selector\n";
-        } else {
+        if (strpos($selector, '//') === 0) {
             // Handle XPath selector
             $dom = new DOMDocument();
             @$dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
@@ -293,6 +289,10 @@ foreach ($htmlFiles as $file) {
                 }
                 $html = $dom->saveHTML();
             }
+        } else {
+            // Handle string-based removal
+            $html = str_replace($selector, '', $html);
+            echo "Removed string content: $selector\n";
         }
     }
 
