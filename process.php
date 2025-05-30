@@ -279,6 +279,9 @@ foreach ($htmlFiles as $file) {
             @$dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
             $xpath = new DOMXPath($dom);
             
+            // Fix quotes in XPath selector
+            $selector = str_replace('"', "'", $selector);
+            
             $elements = $xpath->query($selector);
             if ($elements !== false) {
                 foreach ($elements as $element) {
