@@ -133,18 +133,15 @@ function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXss
                 // Check if content contains encoded HTML tags (XSS indicators)
                 if (preg_match('/&lt;\s*[a-zA-Z][a-zA-Z0-9]*\s*[^&]*&gt;/', $innerHTML)) {
                     // Check if there are child elements that match our selector
-                    $childElements = $xpath->query($xpathQuery, $element);
-                    $hasMatchingChildren = false;
-                    
-                    if ($childElements && $childElements->length > 0) {
-                        // Check if any found elements are actually children (not the element itself)
-                        foreach ($childElements as $childElement) {
-                            if ($childElement !== $element) {
-                                $hasMatchingChildren = true;
-                                break;
-                            }
-                        }
+                    // Convert the absolute XPath to a relative one for descendant search
+                    $descendantQuery = $xpathQuery;
+                    if (strpos($xpathQuery, '//') === 0) {
+                        // Convert //tagname[@attr] to .//tagname[@attr] for descendant search
+                        $descendantQuery = '.' . $xpathQuery;
                     }
+                    
+                    $childElements = $xpath->query($descendantQuery, $element);
+                    $hasMatchingChildren = $childElements && $childElements->length > 0;
                     
                     if ($hasMatchingChildren) {
                         echo "XSS found but child elements match selector, skipping to preserve content\n";
