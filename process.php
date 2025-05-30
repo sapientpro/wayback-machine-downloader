@@ -56,17 +56,108 @@ function shouldRemoveExternalDomain(string $url, array $normalizedRemoveDomains)
     return in_array($normalizedHost, $normalizedRemoveDomains);
 }
 
+/**
+ * Check if external URL domain should be kept (not removed)
+ */
+function shouldKeepExternalDomain(string $url, array $normalizedKeepDomains): bool {
+    // If no keep list is specified, keep all domains
+    if (empty($normalizedKeepDomains)) {
+        return true;
+    }
+    
+    // Parse the URL to get hostname
+    $parsed = parse_url($url);
+    $host = $parsed['host'] ?? '';
+    
+    // If no host, don't keep
+    if (empty($host)) {
+        return false;
+    }
+    
+    // Normalize hostname for comparison
+    $normalizedHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $host);
+    
+    // Check if this domain should be kept
+    return in_array($normalizedHost, $normalizedKeepDomains);
+}
+
+/**
+ * Clean XSS attacks from specified elements
+ */
+function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXssSelectors): void {
+    if (empty($cleanXssSelectors)) {
+        return;
+    }
+    
+    foreach ($cleanXssSelectors as $selector) {
+        // Convert CSS-like selector to XPath if needed
+        $xpathQuery = $selector;
+        
+        // Handle simple conversions (this can be expanded for more complex selectors)
+        if (strpos($selector, '[@') === false && strpos($selector, '//') === false) {
+            // Simple class selector like "div.margin" -> "//div[@class='margin']"
+            if (preg_match('/^(\w+)\.([a-zA-Z0-9_-]+)$/', $selector, $matches)) {
+                $xpathQuery = "//{$matches[1]}[@class='{$matches[2]}']";
+            }
+            // Already in XPath format, use as is
+        }
+        
+        echo "Looking for XSS in elements matching: $xpathQuery\n";
+        
+        try {
+            $elements = $xpath->query($xpathQuery);
+            if ($elements === false) {
+                echo "Invalid XPath selector: $xpathQuery\n";
+                continue;
+            }
+            
+            foreach ($elements as $element) {
+                $content = $element->textContent;
+                
+                // Check if content contains encoded HTML tags (XSS indicators)
+                if (preg_match('/&lt;\s*[a-zA-Z][a-zA-Z0-9]*\s*[^&]*&gt;/', $content)) {
+                    echo "Found XSS content in element, cleaning: " . substr($content, 0, 100) . "...\n";
+                    
+                    // Clear the element content
+                    while ($element->firstChild) {
+                        $element->removeChild($element->firstChild);
+                    }
+                    
+                    echo "Cleaned XSS content from element\n";
+                }
+            }
+        } catch (Exception $e) {
+            echo "Error processing XPath selector '$xpathQuery': " . $e->getMessage() . "\n";
+        }
+    }
+}
+
 if ($argc < 2) {
-    exit("Usage: php process.php <domain> [removeLinksByDomain]\n");
+    exit("Usage: php process.php <domain> [removeLinksByDomain] [keepLinksByDomain] [cleanXssSelectors]\n");
 }
 
 $domain = $argv[1];
 $removeLinksByDomain = isset($argv[2]) ? explode(',', $argv[2]) : [];
+$keepLinksByDomain = isset($argv[3]) ? explode(',', $argv[3]) : [];
+$cleanXssSelectors = isset($argv[4]) ? explode(',', $argv[4]) : [];
 
 // Normalize domains to remove for comparison
 $normalizedRemoveDomains = array_map(function($d) {
     return preg_replace('/^www\.(?=[^.]+\.)/', '', trim($d));
 }, $removeLinksByDomain);
+
+// Normalize domains to keep for comparison - filter out empty values
+$normalizedKeepDomains = array_filter(array_map(function($d) {
+    $trimmed = trim($d);
+    return $trimmed !== '' ? preg_replace('/^www\.(?=[^.]+\.)/', '', $trimmed) : '';
+}, $keepLinksByDomain), function($d) {
+    return $d !== '';
+});
+
+// Clean and prepare XSS selectors
+$cleanXssSelectors = array_filter(array_map('trim', $cleanXssSelectors), function($s) {
+    return $s !== '';
+});
 
 $sourceDir = "output/{$domain}";
 $processedDir = "processed/{$domain}";
@@ -167,7 +258,7 @@ foreach ($htmlFiles as $file) {
 
             // Handle external URLs
             if (strpos($url, 'http') === 0 && isExternalUrl($url, $domain)) {
-                // Check if this domain should be removed (converted to text)
+                // Check if this domain should be removed (highest priority)
                 if (shouldRemoveExternalDomain($url, $normalizedRemoveDomains)) {
                     if ($tagInfo['tag'] === 'a') {
                         echo "Removing external link from blocked domain: $url\n";
@@ -180,7 +271,20 @@ foreach ($htmlFiles as $file) {
                     continue;
                 }
                 
-                // Add rel="nofollow" to other external links
+                // Check if this domain should be kept (when keep list is specified)
+                if (!shouldKeepExternalDomain($url, $normalizedKeepDomains)) {
+                    if ($tagInfo['tag'] === 'a') {
+                        echo "Removing external link not in keep list: $url\n";
+                        // Replace link with its text content
+                        $textNode = $dom->createTextNode($node->textContent);
+                        if ($node->parentNode) {
+                            $node->parentNode->replaceChild($textNode, $node);
+                        }
+                    }
+                    continue;
+                }
+                
+                // Add rel="nofollow" to external links that should be kept
                 if ($tagInfo['tag'] === 'a') {
                     $node->setAttribute('rel', 'nofollow');
                     echo "Added rel=\"nofollow\" to external link: $url\n";
@@ -193,7 +297,7 @@ foreach ($htmlFiles as $file) {
                 $url = $m[1];
                 // Check if the extracted URL is external
                 if (isExternalUrl($url, $domain)) {
-                    // Check if this domain should be removed (converted to text)
+                    // Check if this domain should be removed (highest priority)
                     if (shouldRemoveExternalDomain($url, $normalizedRemoveDomains)) {
                         if ($tagInfo['tag'] === 'a') {
                             echo "Removing external Wayback link from blocked domain: $url\n";
@@ -206,7 +310,20 @@ foreach ($htmlFiles as $file) {
                         continue;
                     }
                     
-                    // Add rel="nofollow" to other external links
+                    // Check if this domain should be kept (when keep list is specified)
+                    if (!shouldKeepExternalDomain($url, $normalizedKeepDomains)) {
+                        if ($tagInfo['tag'] === 'a') {
+                            echo "Removing external Wayback link not in keep list: $url\n";
+                            // Replace link with its text content
+                            $textNode = $dom->createTextNode($node->textContent);
+                            if ($node->parentNode) {
+                                $node->parentNode->replaceChild($textNode, $node);
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    // Add rel="nofollow" to external links that should be kept
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
                         echo "Added rel=\"nofollow\" to external Wayback link: $url\n";
@@ -220,7 +337,7 @@ foreach ($htmlFiles as $file) {
                 $url = 'https:' . $url;
                 // Check if the protocol-relative URL is external
                 if (isExternalUrl($url, $domain)) {
-                    // Check if this domain should be removed (converted to text)
+                    // Check if this domain should be removed (highest priority)
                     if (shouldRemoveExternalDomain($url, $normalizedRemoveDomains)) {
                         if ($tagInfo['tag'] === 'a') {
                             echo "Removing external protocol-relative link from blocked domain: $url\n";
@@ -233,7 +350,20 @@ foreach ($htmlFiles as $file) {
                         continue;
                     }
                     
-                    // Add rel="nofollow" to other external links
+                    // Check if this domain should be kept (when keep list is specified)
+                    if (!shouldKeepExternalDomain($url, $normalizedKeepDomains)) {
+                        if ($tagInfo['tag'] === 'a') {
+                            echo "Removing external protocol-relative link not in keep list: $url\n";
+                            // Replace link with its text content
+                            $textNode = $dom->createTextNode($node->textContent);
+                            if ($node->parentNode) {
+                                $node->parentNode->replaceChild($textNode, $node);
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    // Add rel="nofollow" to external links that should be kept
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
                         echo "Added rel=\"nofollow\" to external protocol-relative link: $url\n";
@@ -405,6 +535,9 @@ JS;
         $processedCss = processCss($css, $domain, $sourceDir, $processedDir, $processedResources);
         $style->textContent = $processedCss;
     }
+
+    // Clean XSS attacks from specified elements
+    cleanXssFromElements($dom, $xpath, $cleanXssSelectors);
 
     // Process internal links to remove broken ones with text
     $html = $dom->saveHTML();
