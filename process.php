@@ -281,9 +281,15 @@ foreach ($htmlFiles as $file) {
             
             // Fix quotes in XPath selector
             $selector = str_replace('"', "'", $selector);
+            echo "Debug - Processing XPath selector: $selector\n";
             
-            $elements = $xpath->query($selector);
-            if ($elements !== false) {
+            try {
+                $elements = $xpath->query($selector);
+                if ($elements === false) {
+                    echo "Warning: Invalid XPath selector: $selector\n";
+                    continue;
+                }
+                
                 foreach ($elements as $element) {
                     echo "Removing element matching selector: $selector\n";
                     if ($element->parentNode) {
@@ -291,6 +297,8 @@ foreach ($htmlFiles as $file) {
                     }
                 }
                 $html = $dom->saveHTML();
+            } catch (Exception $e) {
+                echo "Error processing XPath selector '$selector': " . $e->getMessage() . "\n";
             }
         } else {
             // Handle string-based removal
