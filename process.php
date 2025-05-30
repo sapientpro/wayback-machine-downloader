@@ -337,7 +337,8 @@ foreach ($htmlFiles as $file) {
         ['tag' => 'source', 'attr' => 'src'],
         ['tag' => 'track',  'attr' => 'src'],
     ];
-
+    
+    //for each tag, get the nodes and process the urls
     foreach ($tags as $tagInfo) {
         $nodes = $xpath->query("//{$tagInfo['tag']}[@{$tagInfo['attr']}]");
         foreach ($nodes as $node) {
