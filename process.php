@@ -171,7 +171,7 @@ $domain = $argv[1];
 $removeLinksByDomain = isset($argv[2]) ? explode(',', $argv[2]) : [];
 $keepLinksByDomain = isset($argv[3]) ? explode(',', $argv[3]) : [];
 $cleanXssSelectors = isset($argv[4]) ? explode(',', $argv[4]) : [];
-$removeEncodingTags = isset($argv[5]) ? explode(',', $argv[5]) : [];
+$removeEncodingTags = isset($argv[5]) ? explode('|', $argv[5]) : [];
 
 // Normalize domains to remove for comparison
 $normalizedRemoveDomains = array_map(function($d) {
