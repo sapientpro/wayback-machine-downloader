@@ -36,11 +36,38 @@ function isExternalUrl(string $url, string $domain): bool {
     return $normalizedHost !== $normalizedDomain;
 }
 
+/**
+ * Check if external URL domain should be removed (converted to text)
+ */
+function shouldRemoveExternalDomain(string $url, array $normalizedRemoveDomains): bool {
+    // Parse the URL to get hostname
+    $parsed = parse_url($url);
+    $host = $parsed['host'] ?? '';
+    
+    // If no host, don't remove
+    if (empty($host)) {
+        return false;
+    }
+    
+    // Normalize hostname for comparison
+    $normalizedHost = preg_replace('/^www\.(?=[^.]+\.)/', '', $host);
+    
+    // Check if this domain should be removed
+    return in_array($normalizedHost, $normalizedRemoveDomains);
+}
+
 if ($argc < 2) {
-    exit("Usage: php process.php <domain>\n");
+    exit("Usage: php process.php <domain> [removeLinksByDomain]\n");
 }
 
 $domain = $argv[1];
+$removeLinksByDomain = isset($argv[2]) ? explode(',', $argv[2]) : [];
+
+// Normalize domains to remove for comparison
+$normalizedRemoveDomains = array_map(function($d) {
+    return preg_replace('/^www\.(?=[^.]+\.)/', '', trim($d));
+}, $removeLinksByDomain);
+
 $sourceDir = "output/{$domain}";
 $processedDir = "processed/{$domain}";
 $publicDir = "processed/{$domain}/public";
@@ -140,7 +167,20 @@ foreach ($htmlFiles as $file) {
 
             // Handle external URLs
             if (strpos($url, 'http') === 0 && isExternalUrl($url, $domain)) {
-                // Add rel="nofollow" to external links
+                // Check if this domain should be removed (converted to text)
+                if (shouldRemoveExternalDomain($url, $normalizedRemoveDomains)) {
+                    if ($tagInfo['tag'] === 'a') {
+                        echo "Removing external link from blocked domain: $url\n";
+                        // Replace link with its text content
+                        $textNode = $dom->createTextNode($node->textContent);
+                        if ($node->parentNode) {
+                            $node->parentNode->replaceChild($textNode, $node);
+                        }
+                    }
+                    continue;
+                }
+                
+                // Add rel="nofollow" to other external links
                 if ($tagInfo['tag'] === 'a') {
                     $node->setAttribute('rel', 'nofollow');
                     echo "Added rel=\"nofollow\" to external link: $url\n";
@@ -153,7 +193,20 @@ foreach ($htmlFiles as $file) {
                 $url = $m[1];
                 // Check if the extracted URL is external
                 if (isExternalUrl($url, $domain)) {
-                    // Add rel="nofollow" to external links
+                    // Check if this domain should be removed (converted to text)
+                    if (shouldRemoveExternalDomain($url, $normalizedRemoveDomains)) {
+                        if ($tagInfo['tag'] === 'a') {
+                            echo "Removing external Wayback link from blocked domain: $url\n";
+                            // Replace link with its text content
+                            $textNode = $dom->createTextNode($node->textContent);
+                            if ($node->parentNode) {
+                                $node->parentNode->replaceChild($textNode, $node);
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    // Add rel="nofollow" to other external links
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
                         echo "Added rel=\"nofollow\" to external Wayback link: $url\n";
@@ -167,7 +220,20 @@ foreach ($htmlFiles as $file) {
                 $url = 'https:' . $url;
                 // Check if the protocol-relative URL is external
                 if (isExternalUrl($url, $domain)) {
-                    // Add rel="nofollow" to external links
+                    // Check if this domain should be removed (converted to text)
+                    if (shouldRemoveExternalDomain($url, $normalizedRemoveDomains)) {
+                        if ($tagInfo['tag'] === 'a') {
+                            echo "Removing external protocol-relative link from blocked domain: $url\n";
+                            // Replace link with its text content
+                            $textNode = $dom->createTextNode($node->textContent);
+                            if ($node->parentNode) {
+                                $node->parentNode->replaceChild($textNode, $node);
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    // Add rel="nofollow" to other external links
                     if ($tagInfo['tag'] === 'a') {
                         $node->setAttribute('rel', 'nofollow');
                         echo "Added rel=\"nofollow\" to external protocol-relative link: $url\n";

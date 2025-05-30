@@ -62,7 +62,20 @@ php run.php example.com 20200101 info 0 100 "parking.php,/edit/"
 Use `process.php` to create a static version of the website:
 
 ```bash
-php process.php <domain>
+php process.php <domain> [removeLinksByDomain]
+```
+
+Parameters:
+- `domain`: The domain that was downloaded
+- `removeLinksByDomain`: Optional comma-separated list of external domains whose links should be removed (converted to text)
+
+Examples:
+```bash
+# Basic processing
+php process.php example.com
+
+# Remove links from specific domains
+php process.php example.com "spbcompany.com,osdisc.com,affiliate.com"
 ```
 
 This will:
@@ -71,6 +84,8 @@ This will:
 - Handle broken links and resources
 - Generate CloudFlare Functions for dynamic URLs
 - Create a `_redirects` file for URL mapping
+- Add `rel="nofollow"` to external links (except those in removeLinksByDomain list)
+- Remove links from specified domains and replace them with text content
 
 ## Output Structure
 
