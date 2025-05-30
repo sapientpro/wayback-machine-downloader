@@ -115,7 +115,31 @@ function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXss
                 continue;
             }
             
+            // Convert NodeList to array and sort by depth (deepest first)
+            $elementsArray = [];
             foreach ($elements as $element) {
+                $depth = 0;
+                $current = $element;
+                while ($current->parentNode && $current->parentNode instanceof DOMElement) {
+                    $depth++;
+                    $current = $current->parentNode;
+                }
+                $elementsArray[] = ['element' => $element, 'depth' => $depth];
+            }
+            
+            // Sort by depth (deepest first)
+            usort($elementsArray, function($a, $b) {
+                return $b['depth'] - $a['depth'];
+            });
+            
+            foreach ($elementsArray as $elementData) {
+                $element = $elementData['element'];
+                
+                // Skip if element has been removed from DOM
+                if (!$element->parentNode) {
+                    continue;
+                }
+                
                 // Get the innerHTML to check for encoded HTML entities
                 $innerHTML = '';
                 foreach ($element->childNodes as $child) {
@@ -126,39 +150,14 @@ function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXss
                 
                 // Check if content contains encoded HTML tags (XSS indicators)
                 if (preg_match('/&lt;\s*[a-zA-Z][a-zA-Z0-9]*\s*[^&]*&gt;/', $innerHTML)) {
-                    // Before cleaning, check if the XSS is in a nested element that also matches our selector
-                    $hasNestedMatchingElements = false;
-                    $nestedElements = $xpath->query($xpathQuery, $element);
+                    echo "Found XSS content in element, cleaning: " . substr($innerHTML, 0, 100) . "...\n";
                     
-                    if ($nestedElements && $nestedElements->length > 0) {
-                        // Check if any nested matching elements contain XSS
-                        foreach ($nestedElements as $nestedElement) {
-                            if ($nestedElement !== $element) { // Don't check the element against itself
-                                $nestedInnerHTML = '';
-                                foreach ($nestedElement->childNodes as $child) {
-                                    $nestedInnerHTML .= $dom->saveHTML($child);
-                                }
-                                
-                                if (preg_match('/&lt;\s*[a-zA-Z][a-zA-Z0-9]*\s*[^&]*&gt;/', $nestedInnerHTML)) {
-                                    echo "Found XSS in nested element, skipping parent to preserve other content\n";
-                                    $hasNestedMatchingElements = true;
-                                    break;
-                                }
-                            }
-                        }
+                    // Clear the element content
+                    while ($element->firstChild) {
+                        $element->removeChild($element->firstChild);
                     }
                     
-                    // Only clean if XSS is not in nested matching elements
-                    if (!$hasNestedMatchingElements) {
-                        echo "Found XSS content in element, cleaning: " . substr($innerHTML, 0, 100) . "...\n";
-                        
-                        // Clear the element content
-                        while ($element->firstChild) {
-                            $element->removeChild($element->firstChild);
-                        }
-                        
-                        echo "Cleaned XSS content from element\n";
-                    }
+                    echo "Cleaned XSS content from element\n";
                 }
             }
         } catch (Exception $e) {
