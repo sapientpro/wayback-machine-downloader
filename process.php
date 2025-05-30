@@ -99,7 +99,11 @@ function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXss
             if (preg_match('/^(\w+)\.([a-zA-Z0-9_-]+)$/', $selector, $matches)) {
                 $xpathQuery = "//{$matches[1]}[@class='{$matches[2]}']";
             }
-            // Already in XPath format, use as is
+        } else {
+            // If it looks like XPath but doesn't start with //, add it
+            if (strpos($selector, '[@') !== false && strpos($selector, '//') !== 0) {
+                $xpathQuery = '//' . $selector;
+            }
         }
         
         echo "Looking for XSS in elements matching: $xpathQuery\n";
