@@ -265,6 +265,13 @@ foreach ($htmlFiles as $file) {
         continue;
     }
 
+    // Detect encoding
+    $encoding = mb_detect_encoding($html, ['UTF-8', 'ISO-8859-1', 'Windows-1252'], true);
+    if ($encoding && $encoding !== 'UTF-8') {
+        echo "Converting from $encoding to UTF-8\n";
+        $html = mb_convert_encoding($html, 'UTF-8', $encoding);
+    }
+
     $dom = new DOMDocument();
     @$dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
     $xpath = new DOMXPath($dom);
