@@ -164,13 +164,14 @@ function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXss
 }
 
 if ($argc < 2) {
-    exit("Usage: php process.php <domain> [removeLinksByDomain] [keepLinksByDomain] [cleanXssSelectors]\n");
+    exit("Usage: php process.php <domain> [removeLinksByDomain] [keepLinksByDomain] [cleanXssSelectors] [removeContent]\n");
 }
 
 $domain = $argv[1];
 $removeLinksByDomain = isset($argv[2]) ? explode(',', $argv[2]) : [];
 $keepLinksByDomain = isset($argv[3]) ? explode(',', $argv[3]) : [];
 $cleanXssSelectors = isset($argv[4]) ? explode(',', $argv[4]) : [];
+$removeContent = isset($argv[5]) ? explode(',', $argv[5]) : [];
 
 // Normalize domains to remove for comparison
 $normalizedRemoveDomains = array_map(function($d) {
@@ -187,6 +188,11 @@ $normalizedKeepDomains = array_filter(array_map(function($d) {
 
 // Clean and prepare XSS selectors
 $cleanXssSelectors = array_filter(array_map('trim', $cleanXssSelectors), function($s) {
+    return $s !== '';
+});
+
+// Clean and prepare content to remove
+$removeContent = array_filter(array_map('trim', $removeContent), function($s) {
     return $s !== '';
 });
 
@@ -270,6 +276,17 @@ foreach ($htmlFiles as $file) {
     if ($encoding && $encoding !== 'UTF-8') {
         echo "Converting from $encoding to UTF-8\n";
         $html = mb_convert_encoding($html, 'UTF-8', $encoding);
+    }
+
+    // Remove specified content
+    if (!empty($removeContent)) {
+        foreach ($removeContent as $content) {
+            $count = 0;
+            $html = str_replace($content, '', $html, $count);
+            if ($count > 0) {
+                echo "Removed content: " . substr($content, 0, 50) . "... ($count times)\n";
+            }
+        }
     }
 
     $dom = new DOMDocument();
