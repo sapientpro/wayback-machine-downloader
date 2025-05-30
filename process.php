@@ -447,7 +447,20 @@ foreach ($htmlFiles as $file) {
             if ($tagInfo['tag'] === 'img') {
                 if (!file_exists($sourceResourcePath) || is_dir($sourceResourcePath)) {
                     echo "Removing broken image: $relativePath (checked at: $sourceResourcePath)\n";
-                    $node->parentNode->removeChild($node);
+                    
+                    // If image is inside an anchor tag, replace with alt text
+                    if ($node->parentNode && $node->parentNode->nodeName === 'a') {
+                        $altText = $node->getAttribute('alt');
+                        if (!empty($altText)) {
+                            echo "Replacing broken image with alt text: $altText\n";
+                            $textNode = $dom->createTextNode($altText);
+                            $node->parentNode->replaceChild($textNode, $node);
+                        } else {
+                            $node->parentNode->removeChild($node);
+                        }
+                    } else {
+                        $node->parentNode->removeChild($node);
+                    }
                     continue;
                 }
             }
