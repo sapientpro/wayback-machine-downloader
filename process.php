@@ -567,7 +567,7 @@ JS;
     $styleNodes = $xpath->query("//style");
     foreach ($styleNodes as $style) {
         $css = $style->textContent;
-        $processedCss = processCss($css, $domain, $sourceDir, $processedDir, $processedResources);
+        $processedCss = processCss($css, $domain, $sourceDir, $publicDir, $processedResources);
         $style->textContent = $processedCss;
     }
 
@@ -658,7 +658,7 @@ function transformUrlToStaticPath(string $url): string {
 /**
  * Process CSS content to transform URLs
  */
-function processCss(string $css, string $domain, string $sourceDir, string $processedDir, array &$processedResources): string {
+function processCss(string $css, string $domain, string $sourceDir, string $publicDir, array &$processedResources): string {
     // Extract URLs from CSS
     $patterns = [
         // url() patterns
@@ -672,7 +672,7 @@ function processCss(string $css, string $domain, string $sourceDir, string $proc
     ];
 
     foreach ($patterns as $pattern) {
-        $css = preg_replace_callback($pattern, function($matches) use ($domain, $sourceDir, $processedDir, &$processedResources) {
+        $css = preg_replace_callback($pattern, function($matches) use ($domain, $sourceDir, $publicDir, &$processedResources) {
             $url = $matches[1];
             
             // Skip data URLs
