@@ -433,6 +433,12 @@ foreach ($htmlFiles as $file) {
             // Create relative path and ensure forward slashes
             $relativePath = str_replace('\\', '/', ltrim($path, '/'));
             
+            // For relative URLs, resolve against the current HTML file's directory
+            if (strpos($url, '/') !== 0 && strpos($url, 'http') !== 0) {
+                $currentDir = dirname($relativePath);
+                $relativePath = $currentDir . '/' . $url;
+            }
+            
             // Check if we need to copy this resource
             $sourceResourcePath = $sourceDir . '/' . $relativePath;
             $targetResourcePath = $publicDir . '/' . $relativePath;
@@ -440,7 +446,7 @@ foreach ($htmlFiles as $file) {
             // For img tags, remove them if the source file doesn't exist
             if ($tagInfo['tag'] === 'img') {
                 if (!file_exists($sourceResourcePath) || is_dir($sourceResourcePath)) {
-                    echo "Removing broken image: $relativePath\n";
+                    echo "Removing broken image: $relativePath (checked at: $sourceResourcePath)\n";
                     $node->parentNode->removeChild($node);
                     continue;
                 }
