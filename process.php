@@ -116,11 +116,17 @@ function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXss
             }
             
             foreach ($elements as $element) {
-                $content = $element->textContent;
+                // Get the innerHTML to check for encoded HTML entities
+                $innerHTML = '';
+                foreach ($element->childNodes as $child) {
+                    $innerHTML .= $dom->saveHTML($child);
+                }
+                
+                echo "Checking element content: " . substr($innerHTML, 0, 100) . "...\n";
                 
                 // Check if content contains encoded HTML tags (XSS indicators)
-                if (preg_match('/&lt;\s*[a-zA-Z][a-zA-Z0-9]*\s*[^&]*&gt;/', $content)) {
-                    echo "Found XSS content in element, cleaning: " . substr($content, 0, 100) . "...\n";
+                if (preg_match('/&lt;\s*[a-zA-Z][a-zA-Z0-9]*\s*[^&]*&gt;/', $innerHTML)) {
+                    echo "Found XSS content in element, cleaning: " . substr($innerHTML, 0, 100) . "...\n";
                     
                     // Clear the element content
                     while ($element->firstChild) {

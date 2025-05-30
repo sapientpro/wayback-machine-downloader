@@ -62,21 +62,40 @@ php run.php example.com 20200101 info 0 100 "parking.php,/edit/"
 Use `process.php` to create a static version of the website:
 
 ```bash
-php process.php <domain> [removeLinksByDomain]
+php process.php <domain> [removeLinksByDomain] [keepLinksByDomain] [cleanXssSelectors]
 ```
 
 Parameters:
 - `domain`: The domain that was downloaded
 - `removeLinksByDomain`: Optional comma-separated list of external domains whose links should be removed (converted to text)
+- `keepLinksByDomain`: Optional comma-separated list of external domains whose links should be kept. When specified, all other external domains will be removed (acts as whitelist)
+- `cleanXssSelectors`: Optional comma-separated list of XPath selectors for elements that should be cleaned if they contain encoded HTML tags (XSS attacks)
 
 Examples:
 ```bash
-# Basic processing
+# Basic processing - all external links get rel="nofollow"
 php process.php example.com
 
-# Remove links from specific domains
+# Remove links from specific domains - other external links get rel="nofollow"
 php process.php example.com "spbcompany.com,osdisc.com,affiliate.com"
+
+# Keep only specific domains (remove all others)
+php process.php example.com "" "youtube.com,github.com"
+
+# Clean XSS attacks from specific elements
+php process.php example.com "" "" "div[@class='margin'],span[@class='spam']"
+
+# Combine all parameters
+php process.php example.com "spam.com,ads.com" "youtube.com,github.com" "div[@class='margin']"
 ```
+
+**XSS Cleaning:**
+The script can detect and clean XSS attacks that appear as encoded HTML tags (e.g., `&lt;a href=...&gt;`) within specified elements. When such content is found, the element's content is completely removed while preserving the element structure.
+
+**Link Processing Priority:**
+1. Links from domains in `removeLinksByDomain` are always removed (highest priority)
+2. If `keepLinksByDomain` contains actual domains, only links from those domains are kept (whitelist mode)
+3. If `keepLinksByDomain` is empty or not specified, all other external links get `rel="nofollow"`
 
 This will:
 - Process all downloaded files
@@ -84,8 +103,9 @@ This will:
 - Handle broken links and resources
 - Generate CloudFlare Functions for dynamic URLs
 - Create a `_redirects` file for URL mapping
-- Add `rel="nofollow"` to external links (except those in removeLinksByDomain list)
-- Remove links from specified domains and replace them with text content
+- Add `rel="nofollow"` to external links that should be kept
+- Remove links from blocked domains and domains not in the keep list
+- Clean XSS attacks from specified elements
 
 ## Output Structure
 
