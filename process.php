@@ -269,6 +269,15 @@ foreach ($htmlFiles as $file) {
     @$dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
     $xpath = new DOMXPath($dom);
 
+    // Remove base tags
+    $baseTags = $xpath->query('//base');
+    foreach ($baseTags as $baseTag) {
+        echo "Removing base tag: " . $baseTag->getAttribute('href') . "\n";
+        if ($baseTag->parentNode) {
+            $baseTag->parentNode->removeChild($baseTag);
+        }
+    }
+
     // Process all resource URLs
     $tags = [
         ['tag' => 'link',   'attr' => 'href'],
