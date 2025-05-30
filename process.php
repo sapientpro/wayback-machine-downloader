@@ -164,14 +164,14 @@ function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXss
 }
 
 if ($argc < 2) {
-    exit("Usage: php process.php <domain> [removeLinksByDomain] [keepLinksByDomain] [cleanXssSelectors] [removeContent]\n");
+    exit("Usage: php process.php <domain> [removeLinksByDomain] [keepLinksByDomain] [cleanXssSelectors] [removeEncodingTags]\n");
 }
 
 $domain = $argv[1];
 $removeLinksByDomain = isset($argv[2]) ? explode(',', $argv[2]) : [];
 $keepLinksByDomain = isset($argv[3]) ? explode(',', $argv[3]) : [];
 $cleanXssSelectors = isset($argv[4]) ? explode(',', $argv[4]) : [];
-$removeContent = isset($argv[5]) ? explode(',', $argv[5]) : [];
+$removeEncodingTags = isset($argv[5]) ? explode(',', $argv[5]) : [];
 
 // Normalize domains to remove for comparison
 $normalizedRemoveDomains = array_map(function($d) {
@@ -191,8 +191,8 @@ $cleanXssSelectors = array_filter(array_map('trim', $cleanXssSelectors), functio
     return $s !== '';
 });
 
-// Clean and prepare content to remove
-$removeContent = array_filter(array_map('trim', $removeContent), function($s) {
+// Clean and prepare encoding tag selectors
+$removeEncodingTags = array_filter(array_map('trim', $removeEncodingTags), function($s) {
     return $s !== '';
 });
 
@@ -271,22 +271,36 @@ foreach ($htmlFiles as $file) {
         continue;
     }
 
+    // Remove XML declarations and meta tags based on selectors
+    foreach ($removeEncodingTags as $selector) {
+        if (strpos($selector, '<?xml') === 0) {
+            // Handle XML declaration as string
+            $html = str_replace($selector, '', $html);
+            echo "Removed XML declaration: $selector\n";
+        } else {
+            // Handle XPath selector
+            $dom = new DOMDocument();
+            @$dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+            $xpath = new DOMXPath($dom);
+            
+            $elements = $xpath->query($selector);
+            if ($elements !== false) {
+                foreach ($elements as $element) {
+                    echo "Removing element matching selector: $selector\n";
+                    if ($element->parentNode) {
+                        $element->parentNode->removeChild($element);
+                    }
+                }
+                $html = $dom->saveHTML();
+            }
+        }
+    }
+
     // Detect encoding
     $encoding = mb_detect_encoding($html, ['UTF-8', 'ISO-8859-1', 'Windows-1252'], true);
     if ($encoding && $encoding !== 'UTF-8') {
         echo "Converting from $encoding to UTF-8\n";
         $html = mb_convert_encoding($html, 'UTF-8', $encoding);
-    }
-
-    // Remove specified content
-    if (!empty($removeContent)) {
-        foreach ($removeContent as $content) {
-            $count = 0;
-            $html = str_replace($content, '', $html, $count);
-            if ($count > 0) {
-                echo "Removed content: " . substr($content, 0, 50) . "... ($count times)\n";
-            }
-        }
     }
 
     $dom = new DOMDocument();
