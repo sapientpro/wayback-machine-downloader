@@ -282,6 +282,12 @@ foreach ($htmlFiles as $file) {
 export async function onRequest(context) {
   const url = new URL(context.request.url);
   const params = new URLSearchParams(url.search);
+
+  //skip root urls
+  if (!params.toString()) {
+    // Serve static `index.html`
+    return context.next();
+  }
   
   // Get all parameters
   const paramValues = {};
