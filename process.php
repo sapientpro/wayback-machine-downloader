@@ -115,26 +115,8 @@ function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXss
                 continue;
             }
             
-            // Convert NodeList to array and sort by depth (deepest first)
-            $elementsArray = [];
+            // Process each element
             foreach ($elements as $element) {
-                $depth = 0;
-                $current = $element;
-                while ($current->parentNode && $current->parentNode instanceof DOMElement) {
-                    $depth++;
-                    $current = $current->parentNode;
-                }
-                $elementsArray[] = ['element' => $element, 'depth' => $depth];
-            }
-            
-            // Sort by depth (deepest first)
-            usort($elementsArray, function($a, $b) {
-                return $b['depth'] - $a['depth'];
-            });
-            
-            foreach ($elementsArray as $elementData) {
-                $element = $elementData['element'];
-                
                 // Skip if element has been removed from DOM
                 if (!$element->parentNode) {
                     continue;
@@ -150,43 +132,24 @@ function cleanXssFromElements(DOMDocument $dom, DOMXPath $xpath, array $cleanXss
                 
                 // Check if content contains encoded HTML tags (XSS indicators)
                 if (preg_match('/&lt;\s*[a-zA-Z][a-zA-Z0-9]*\s*[^&]*&gt;/', $innerHTML)) {
-                    // Check if the XSS is in this element's direct content or in nested matching elements
-                    $elementHasDirectXss = true;
+                    // Check if there are child elements that match our selector
+                    $childElements = $xpath->query($xpathQuery, $element);
+                    $hasMatchingChildren = false;
                     
-                    // Find nested matching elements within this element
-                    $nestedElements = $xpath->query($xpathQuery, $element);
-                    
-                    if ($nestedElements && $nestedElements->length > 0) {
-                        // Create a copy of the element to test content without nested matching elements
-                        $testElement = $element->cloneNode(true);
-                        $testDoc = new DOMDocument();
-                        $testDoc->appendChild($testDoc->importNode($testElement, true));
-                        $testXpath = new DOMXPath($testDoc);
-                        
-                        // Remove nested matching elements from the test copy
-                        $nestedInTest = $testXpath->query($xpathQuery);
-                        foreach ($nestedInTest as $nested) {
-                            if ($nested !== $testElement && $nested->parentNode) {
-                                $nested->parentNode->removeChild($nested);
+                    if ($childElements && $childElements->length > 0) {
+                        // Check if any found elements are actually children (not the element itself)
+                        foreach ($childElements as $childElement) {
+                            if ($childElement !== $element) {
+                                $hasMatchingChildren = true;
+                                break;
                             }
-                        }
-                        
-                        // Check if XSS still exists after removing nested matching elements
-                        $contentWithoutNested = '';
-                        foreach ($testElement->childNodes as $child) {
-                            $contentWithoutNested .= $testDoc->saveHTML($child);
-                        }
-                        
-                        $elementHasDirectXss = preg_match('/&lt;\s*[a-zA-Z][a-zA-Z0-9]*\s*[^&]*&gt;/', $contentWithoutNested);
-                        
-                        if (!$elementHasDirectXss) {
-                            echo "XSS found only in nested matching elements, skipping this element\n";
                         }
                     }
                     
-                    // Only clean if XSS is directly in this element's content
-                    if ($elementHasDirectXss) {
-                        echo "Found XSS content directly in element, cleaning: " . substr($innerHTML, 0, 100) . "...\n";
+                    if ($hasMatchingChildren) {
+                        echo "XSS found but child elements match selector, skipping to preserve content\n";
+                    } else {
+                        echo "XSS found and no matching child elements, cleaning: " . substr($innerHTML, 0, 100) . "...\n";
                         
                         // Clear the element content
                         while ($element->firstChild) {
